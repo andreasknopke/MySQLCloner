@@ -5,21 +5,12 @@ function ConfirmClone({ source, target, onConfirm, onCancel }) {
   const sourceDbName = source.database;
   const targetDbName = target.database;
 
-  // Generate mysqldump command (sanitized for display)
-  const dumpCommand = `mysqldump -h ${source.host} -P ${source.port || 3306} -u ${source.user} \\
-  --skip-ssl --single-transaction --lock-tables --routines --triggers --events \\
-  --skip-add-drop-database --skip-add-locks ${sourceDbName} > /tmp/mysql_dump.sql`;
-
-  // Generate mysql restore command (sanitized for display)
-  const restoreCommand = `mysql -h ${target.host} -P ${target.port || 3306} -u ${target.user} \\
-  --skip-ssl ${targetDbName} < /tmp/mysql_dump.sql`;
-
   return (
     <div className="confirm-clone-overlay">
       <div className="confirm-clone-dialog">
         <div className="dialog-header">
           <h2>🔍 Bestätige Datenbank-Klon</h2>
-          <p>Überprüfe die folgenden Befehle, bevor du fortfährst</p>
+          <p>Überprüfe die folgenden Details, bevor du fortfährst</p>
         </div>
 
         <div className="dialog-content">
@@ -40,26 +31,27 @@ function ConfirmClone({ source, target, onConfirm, onCancel }) {
           </div>
 
           <div className="commands-section">
-            <h3>🔧 Verwendete Befehle:</h3>
+            <h3>🔧 Klon-Prozess:</h3>
 
             <div className="command-block">
-              <div className="command-label">1. Export aus Quell-Datenbank</div>
-              <pre className="command-code">{dumpCommand}</pre>
-            </div>
-
-            <div className="command-block">
-              <div className="command-label">2. Import in Ziel-Datenbank</div>
-              <pre className="command-code">{restoreCommand}</pre>
+              <div className="command-label">Der folgende Prozess wird ausgeführt:</div>
+              <pre className="command-code">{`1. Verbinde zu Quell-DB (READ-ONLY Modus)
+2. Verbinde zu Ziel-DB
+3. Erstelle Ziel-Datenbank falls nötig
+4. Kopiere alle Tabellen (Schema + Daten)
+5. Kopiere Views, Procedures, Functions
+6. Schließe Verbindungen`}</pre>
             </div>
 
             <div className="security-note">
               <strong>🔒 Sicherheitshinweise:</strong>
               <ul>
                 <li>✓ Quell-Datenbank wird auf READ-ONLY gesetzt</li>
-                <li>✓ Keine DROP DATABASE - DB bleibt erhalten</li>
-                <li>✓ Nutzt Single-Transaction für Konsistenz</li>
-                <li>✓ Temporäre Datei wird nach Import gelöscht</li>
-                <li>✓ Tabellen, Trigger, Routinen & Events werden kopiert</li>
+                <li>✓ Pure Node.js - keine externen Tools benötigt</li>
+                <li>✓ Daten werden batch-weise kopiert (1000 Zeilen)</li>
+                <li>✓ Foreign Keys werden temporär deaktiviert</li>
+                <li>✓ Views, Procedures & Functions werden kopiert</li>
+                <li>✓ DEFINER wird für Portabilität entfernt</li>
               </ul>
             </div>
           </div>

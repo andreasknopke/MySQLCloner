@@ -11,21 +11,9 @@ RUN npm install
 COPY client/ ./
 RUN npm run build
 
-# Use Debian-based image for proper MySQL client support (caching_sha2_password plugin)
-FROM node:18-slim
+# Final image - no external MySQL tools needed, using pure Node.js cloning
+FROM node:18-alpine
 WORKDIR /app
-
-# Install MySQL 8.0 client from Oracle's official repository
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends wget gnupg ca-certificates lsb-release && \
-    wget --no-check-certificate https://dev.mysql.com/get/mysql-apt-config_0.8.29-1_all.deb && \
-    DEBIAN_FRONTEND=noninteractive dpkg -i mysql-apt-config_0.8.29-1_all.deb && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends mysql-client && \
-    rm -f mysql-apt-config_0.8.29-1_all.deb && \
-    apt-get remove -y wget gnupg lsb-release && \
-    apt-get autoremove -y && \
-    rm -rf /var/lib/apt/lists/*
 
 # Copy backend
 COPY --from=backend /app/server ./server
@@ -39,5 +27,4 @@ RUN npm install --omit=dev
 
 EXPOSE 5000
 
-# Keep as root for file operations - Railway will handle security
 CMD ["node", "index.js"]
