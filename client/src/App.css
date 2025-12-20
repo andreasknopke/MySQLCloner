@@ -133,3 +133,270 @@
     padding: 20px;
   }
 }
+
+/* Success Actions after Clone */
+.success-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  margin: 20px 0;
+  padding: 20px;
+  background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
+  border-radius: 12px;
+  flex-wrap: wrap;
+}
+
+.success-message {
+  font-size: 1.2em;
+  color: #2e7d32;
+  font-weight: 600;
+}
+
+.schedule-btn {
+  padding: 12px 24px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 1em;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.schedule-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.dismiss-btn {
+  padding: 12px 24px;
+  background: #e0e0e0;
+  color: #666;
+  border: none;
+  border-radius: 8px;
+  font-size: 1em;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.dismiss-btn:hover {
+  background: #d0d0d0;
+}
+
+/* Cron Dialog Styles */
+.cron-dialog {
+  max-width: 550px;
+}
+
+.cron-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.cron-form .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cron-form .form-group label {
+  font-weight: 600;
+  color: #333;
+}
+
+.cron-form .form-group input[type="text"] {
+  padding: 12px;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 1em;
+  transition: border-color 0.2s;
+}
+
+.cron-form .form-group input[type="text"]:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+.cron-form .form-group small {
+  color: #888;
+  font-size: 0.85em;
+}
+
+.schedule-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.schedule-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 15px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+  border: 2px solid transparent;
+}
+
+.schedule-option:hover {
+  background: #e8f4fd;
+}
+
+.schedule-option.selected {
+  background: #e8f4fd;
+  border-color: #667eea;
+}
+
+.schedule-option input[type="radio"] {
+  accent-color: #667eea;
+  width: 18px;
+  height: 18px;
+}
+
+.schedule-option .option-label {
+  font-weight: 500;
+  color: #333;
+  min-width: 180px;
+}
+
+.schedule-option .option-description {
+  color: #888;
+  font-size: 0.9em;
+}
+
+.connection-summary {
+  background: #f8f9fa;
+  padding: 15px;
+  border-radius: 8px;
+  border-left: 4px solid #667eea;
+}
+
+.connection-summary h4 {
+  margin: 0 0 10px 0;
+  color: #333;
+}
+
+.summary-row {
+  display: flex;
+  gap: 10px;
+  margin: 5px 0;
+  font-size: 0.9em;
+}
+
+.summary-row .label {
+  font-weight: 600;
+  color: #666;
+  min-width: 60px;
+}
+
+.summary-row .value {
+  color: #333;
+  font-family: monospace;
+  word-break: break-all;
+}
+
+.cron-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.btn-primary {
+  padding: 12px 24px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 1em;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-secondary {
+  padding: 12px 24px;
+  background: #e0e0e0;
+  color: #666;
+  border: none;
+  border-radius: 8px;
+  font-size: 1em;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-secondary:hover {
+  background: #d0d0d0;
+}
+
+.btn-secondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.error-message {
+  background: #ffebee;
+  color: #c62828;
+  padding: 12px;
+  border-radius: 8px;
+  border-left: 4px solid #c62828;
+}
+
+.existing-jobs {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid #e0e0e0;
+}
+
+.existing-jobs h4 {
+  margin: 0 0 12px 0;
+  color: #333;
+}
+
+.existing-jobs ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.existing-jobs li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  background: #f8f9fa;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.existing-jobs .job-name {
+  font-weight: 500;
+  flex: 1;
+}
+
+.existing-jobs .job-schedule {
+  font-family: monospace;
+  color: #666;
+  background: #e8e8e8;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.85em;
+}
+
+.existing-jobs .job-status {
+  font-size: 0.9em;
+}

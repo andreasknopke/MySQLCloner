@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './App.css';
 import CredentialForm from './components/CredentialForm';
 import ProgressLog from './components/ProgressLog';
 import DatabaseStats from './components/DatabaseStats';
 import ConfirmClone from './components/ConfirmClone';
+import CronDialog from './components/CronDialog';
 
 function App() {
   const [source, setSource] = useState({
@@ -31,6 +32,9 @@ function App() {
   const [sourceStats, setSourceStats] = useState(null);
   const [targetStats, setTargetStats] = useState(null);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [showCronDialog, setShowCronDialog] = useState(false);
+  const [cloneSuccess, setCloneSuccess] = useState(false);
+  const [existingJobs, setExistingJobs] = useState([]);
 
   // Dynamically determine API URL based on environment
   const API_URL = process.env.REACT_APP_API_URL || 
@@ -107,9 +111,32 @@ function App() {
     setShowConfirmDialog(true);
   };
 
+  // Fetch existing cron jobs
+  const fetchCronJobs = async () => {
+    try {
+      const response = await axios.get(`${API_URL}/cron-jobs`);
+      if (response.data.success) {
+        setExistingJobs(response.data.jobs);
+      }
+    } catch (error) {
+      console.log('Could not fetch cron jobs:', error.message);
+    }
+  };
+
+  // Save a new cron job
+  const saveCronJob = async (jobConfig) => {
+    const response = await axios.post(`${API_URL}/cron-jobs`, jobConfig);
+    if (!response.data.success) {
+      throw new Error(response.data.message);
+    }
+    await fetchCronJobs();
+    return response.data;
+  };
+
   const cloneDatabase = async () => {
     setShowConfirmDialog(false);
     setCloning(true);
+    setCloneSuccess(false);
     setLogs([{ type: 'info', message: 'Starting database clone...' }]);
 
     try {
@@ -131,6 +158,7 @@ function App() {
       const decoder = new TextDecoder();
       let currentData = '';
       const newLogs = [];
+      let cloneSuccessful = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -148,6 +176,10 @@ function App() {
               const parsed = JSON.parse(line);
               newLogs.push(parsed);
               setLogs([...newLogs]);
+              // Check if clone was successful
+              if (parsed.status === 'success' || (parsed.message && parsed.message.includes('successfully'))) {
+                cloneSuccessful = true;
+              }
             } catch {
               // Skip invalid JSON lines
             }
@@ -161,12 +193,21 @@ function App() {
           const parsed = JSON.parse(currentData);
           newLogs.push(parsed);
           setLogs([...newLogs]);
+          if (parsed.status === 'success' || (parsed.message && parsed.message.includes('successfully'))) {
+            cloneSuccessful = true;
+          }
         } catch {
           // Skip invalid JSON
         }
       }
 
       setCloning(false);
+      
+      // Show cron dialog after successful clone
+      if (cloneSuccessful) {
+        setCloneSuccess(true);
+        await fetchCronJobs();
+      }
     } catch (error) {
       setCloning(false);
       setLogs(prev => [...prev, { 
@@ -234,6 +275,39 @@ function App() {
               target={target}
               onConfirm={cloneDatabase}
               onCancel={() => setShowConfirmDialog(false)}
+            />
+          )}
+
+          {cloneSuccess && !showCronDialog && (
+            <div className="success-actions">
+              <div className="success-message">
+                ✅ Clone completed successfully!
+              </div>
+              <button 
+                className="schedule-btn"
+                onClick={() => setShowCronDialog(true)}
+              >
+                ⏰ Schedule Auto-Clone
+              </button>
+              <button 
+                className="dismiss-btn"
+                onClick={() => setCloneSuccess(false)}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
+          {showCronDialog && (
+            <CronDialog
+              source={source}
+              target={target}
+              existingJobs={existingJobs}
+              onClose={() => {
+                setShowCronDialog(false);
+                setCloneSuccess(false);
+              }}
+              onSave={saveCronJob}
             />
           )}
 

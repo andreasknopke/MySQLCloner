@@ -5,9 +5,45 @@ const { exec } = require('child_process');
 const util = require('util');
 const fs = require('fs');
 const path = require('path');
+const cron = require('node-cron');
 
 const app = express();
 const execPromise = util.promisify(exec);
+
+// Store scheduled jobs in memory (could be persisted to file/DB later)
+const scheduledJobs = new Map();
+const jobHistory = [];
+
+// Load saved jobs from file on startup
+const JOBS_FILE = path.join(__dirname, 'scheduled-jobs.json');
+const loadSavedJobs = () => {
+  try {
+    if (fs.existsSync(JOBS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(JOBS_FILE, 'utf8'));
+      return data.jobs || [];
+    }
+  } catch (error) {
+    console.error('Failed to load saved jobs:', error.message);
+  }
+  return [];
+};
+
+const saveJobsToFile = () => {
+  try {
+    const jobs = Array.from(scheduledJobs.values()).map(job => ({
+      id: job.id,
+      name: job.name,
+      schedule: job.schedule,
+      source: job.source,
+      target: job.target,
+      enabled: job.enabled,
+      createdAt: job.createdAt
+    }));
+    fs.writeFileSync(JOBS_FILE, JSON.stringify({ jobs }, null, 2));
+  } catch (error) {
+    console.error('Failed to save jobs:', error.message);
+  }
+};
 
 // Allow CORS from origin or disable it for production
 const corsOptions = {
@@ -541,6 +577,316 @@ app.post('/api/get-database-stats', async (req, res) => {
   }
 });
 
+// ============== CRON JOB MANAGEMENT ==============
+
+// Helper function to perform the actual clone (reusable for cron jobs)
+async function performClone(source, target, logCallback) {
+  let sourceConn = null;
+  let targetConn = null;
+  
+  const log = logCallback || console.log;
+
+  try {
+    log('Connecting to source database...');
+    
+    sourceConn = await mysql.createConnection({
+      host: source.host,
+      user: source.user,
+      password: source.password,
+      database: source.database,
+      port: source.port || 3306,
+      multipleStatements: false,
+    });
+
+    await sourceConn.execute('SET SESSION TRANSACTION READ ONLY');
+    log('Source database connected (READ-ONLY mode enforced)');
+
+    log('Connecting to target database...');
+    
+    targetConn = await mysql.createConnection({
+      host: target.host,
+      user: target.user,
+      password: target.password,
+      port: target.port || 3306,
+      multipleStatements: true,
+    });
+
+    log(`Creating target database: ${target.database}`);
+    await targetConn.execute(`CREATE DATABASE IF NOT EXISTS \`${target.database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+    await targetConn.changeUser({ database: target.database });
+    await targetConn.execute("SET SESSION sql_mode = 'NO_ENGINE_SUBSTITUTION'");
+    await targetConn.execute('SET FOREIGN_KEY_CHECKS = 0');
+
+    // Drop all existing tables
+    log('Cleaning target database...');
+    const [existingViews] = await targetConn.execute(
+      `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_SCHEMA = ?`,
+      [target.database]
+    );
+    for (const view of existingViews) {
+      await targetConn.execute(`DROP VIEW IF EXISTS \`${view.TABLE_NAME}\``);
+    }
+    
+    const [existingTables] = await targetConn.execute(
+      `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'`,
+      [target.database]
+    );
+    for (const table of existingTables) {
+      await targetConn.execute(`DROP TABLE IF EXISTS \`${table.TABLE_NAME}\``);
+    }
+
+    // Get all tables from source
+    const [tables] = await sourceConn.execute(
+      `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'`,
+      [source.database]
+    );
+
+    log(`Found ${tables.length} tables to clone`);
+
+    // Clone each table
+    for (let i = 0; i < tables.length; i++) {
+      const tableName = tables[i].TABLE_NAME;
+      log(`Cloning table ${i + 1}/${tables.length}: ${tableName}`);
+
+      const [createResult] = await sourceConn.execute(`SHOW CREATE TABLE \`${tableName}\``);
+      const createStatement = createResult[0]['Create Table'];
+      await targetConn.execute(createStatement);
+
+      // Get first column for ordering
+      const [colInfo] = await sourceConn.execute(
+        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? 
+         ORDER BY ORDINAL_POSITION LIMIT 1`,
+        [source.database, tableName]
+      );
+
+      // Get all PK columns
+      const [allKeyInfo] = await sourceConn.execute(
+        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND CONSTRAINT_NAME = 'PRIMARY' 
+         ORDER BY ORDINAL_POSITION`,
+        [source.database, tableName]
+      );
+      
+      let orderByClause = allKeyInfo.length > 0 
+        ? allKeyInfo.map(k => `\`${k.COLUMN_NAME}\``).join(', ')
+        : `\`${colInfo[0].COLUMN_NAME}\``;
+
+      const [initialCount] = await sourceConn.execute(`SELECT COUNT(*) as cnt FROM \`${tableName}\``);
+      const expectedRows = parseInt(initialCount[0].cnt);
+
+      const batchSize = 500;
+      let offset = 0;
+      let totalCopied = 0;
+
+      while (offset < expectedRows || offset === 0) {
+        const [rows] = await sourceConn.execute(
+          `SELECT * FROM \`${tableName}\` ORDER BY ${orderByClause} LIMIT ${batchSize} OFFSET ${offset}`
+        );
+        
+        if (rows.length === 0) break;
+        
+        const columns = Object.keys(rows[0]);
+        const placeholders = rows.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ');
+        const values = rows.flatMap(row => columns.map(col => row[col]));
+        
+        const insertSQL = `INSERT INTO \`${tableName}\` (${columns.map(c => `\`${c}\``).join(', ')}) VALUES ${placeholders}`;
+        await targetConn.execute(insertSQL, values);
+        totalCopied += rows.length;
+        offset += rows.length;
+        
+        if (rows.length < batchSize) break;
+      }
+
+      log(`  ✓ ${tableName}: ${totalCopied} rows copied`);
+    }
+
+    await targetConn.execute('SET FOREIGN_KEY_CHECKS = 1');
+    log(`Clone completed successfully! ${tables.length} tables copied.`);
+    
+    return { success: true, tablesCloned: tables.length };
+  } catch (error) {
+    log(`Clone failed: ${error.message}`);
+    return { success: false, error: error.message };
+  } finally {
+    if (sourceConn) await sourceConn.end().catch(() => {});
+    if (targetConn) await targetConn.end().catch(() => {});
+  }
+}
+
+// Schedule a new cron job
+function scheduleJob(jobConfig) {
+  const { id, name, schedule, source, target, enabled } = jobConfig;
+  
+  // Validate cron expression
+  if (!cron.validate(schedule)) {
+    throw new Error(`Invalid cron expression: ${schedule}`);
+  }
+  
+  // Stop existing job if exists
+  if (scheduledJobs.has(id)) {
+    scheduledJobs.get(id).task.stop();
+  }
+  
+  // Create the cron task
+  const task = cron.schedule(schedule, async () => {
+    console.log(`[CRON] Running scheduled job: ${name}`);
+    const startTime = new Date();
+    
+    const result = await performClone(source, target, (msg) => {
+      console.log(`[CRON ${name}] ${msg}`);
+    });
+    
+    const endTime = new Date();
+    const duration = (endTime - startTime) / 1000;
+    
+    jobHistory.push({
+      jobId: id,
+      jobName: name,
+      startTime: startTime.toISOString(),
+      endTime: endTime.toISOString(),
+      duration: `${duration.toFixed(1)}s`,
+      success: result.success,
+      error: result.error || null
+    });
+    
+    // Keep only last 100 history entries
+    if (jobHistory.length > 100) {
+      jobHistory.shift();
+    }
+  }, {
+    scheduled: enabled !== false
+  });
+  
+  scheduledJobs.set(id, {
+    id,
+    name,
+    schedule,
+    source,
+    target,
+    enabled: enabled !== false,
+    task,
+    createdAt: jobConfig.createdAt || new Date().toISOString()
+  });
+  
+  saveJobsToFile();
+  return id;
+}
+
+// API: Create a new scheduled job
+app.post('/api/cron-jobs', async (req, res) => {
+  try {
+    const { name, schedule, source, target } = req.body;
+    
+    if (!name || !schedule || !source || !target) {
+      return res.status(400).json({ success: false, message: 'Missing required fields' });
+    }
+    
+    if (!cron.validate(schedule)) {
+      return res.status(400).json({ success: false, message: `Invalid cron expression: ${schedule}` });
+    }
+    
+    const id = `job_${Date.now()}`;
+    scheduleJob({ id, name, schedule, source, target, enabled: true });
+    
+    res.json({ 
+      success: true, 
+      message: 'Scheduled job created',
+      job: { id, name, schedule, enabled: true }
+    });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+// API: Get all scheduled jobs
+app.get('/api/cron-jobs', (req, res) => {
+  const jobs = Array.from(scheduledJobs.values()).map(job => ({
+    id: job.id,
+    name: job.name,
+    schedule: job.schedule,
+    enabled: job.enabled,
+    createdAt: job.createdAt,
+    source: { host: job.source.host, database: job.source.database },
+    target: { host: job.target.host, database: job.target.database }
+  }));
+  
+  res.json({ success: true, jobs });
+});
+
+// API: Delete a scheduled job
+app.delete('/api/cron-jobs/:id', (req, res) => {
+  const { id } = req.params;
+  
+  if (!scheduledJobs.has(id)) {
+    return res.status(404).json({ success: false, message: 'Job not found' });
+  }
+  
+  scheduledJobs.get(id).task.stop();
+  scheduledJobs.delete(id);
+  saveJobsToFile();
+  
+  res.json({ success: true, message: 'Job deleted' });
+});
+
+// API: Toggle job enabled/disabled
+app.patch('/api/cron-jobs/:id', (req, res) => {
+  const { id } = req.params;
+  const { enabled } = req.body;
+  
+  if (!scheduledJobs.has(id)) {
+    return res.status(404).json({ success: false, message: 'Job not found' });
+  }
+  
+  const job = scheduledJobs.get(id);
+  job.enabled = enabled;
+  
+  if (enabled) {
+    job.task.start();
+  } else {
+    job.task.stop();
+  }
+  
+  saveJobsToFile();
+  res.json({ success: true, message: `Job ${enabled ? 'enabled' : 'disabled'}` });
+});
+
+// API: Get job history
+app.get('/api/cron-jobs/history', (req, res) => {
+  res.json({ success: true, history: jobHistory.slice(-50).reverse() });
+});
+
+// API: Run a job immediately (for testing)
+app.post('/api/cron-jobs/:id/run', async (req, res) => {
+  const { id } = req.params;
+  
+  if (!scheduledJobs.has(id)) {
+    return res.status(404).json({ success: false, message: 'Job not found' });
+  }
+  
+  const job = scheduledJobs.get(id);
+  res.json({ success: true, message: 'Job started' });
+  
+  // Run asynchronously
+  performClone(job.source, job.target, console.log);
+});
+
+// Restore saved jobs on startup
+const initializeJobs = () => {
+  const savedJobs = loadSavedJobs();
+  console.log(`Loading ${savedJobs.length} saved cron jobs...`);
+  
+  for (const job of savedJobs) {
+    try {
+      scheduleJob(job);
+      console.log(`  ✓ Restored job: ${job.name} (${job.schedule})`);
+    } catch (error) {
+      console.error(`  ✗ Failed to restore job ${job.name}: ${error.message}`);
+    }
+  }
+};
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  initializeJobs();
 });
