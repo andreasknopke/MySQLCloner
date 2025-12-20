@@ -90,7 +90,7 @@ function CredentialForm({
         </div>
       )}
 
-      {connected && !databases.length && (
+      {!connected || !databases.length && (
         <div className="form-group">
           <label>Database Name</label>
           <input
@@ -98,19 +98,6 @@ function CredentialForm({
             placeholder="Enter database name"
             value={selectedDatabase}
             onChange={(e) => onDatabaseSelect(e.target.value)}
-          />
-        </div>
-      )}
-
-      {!connected && (
-        <div className="form-group">
-          <label>Database Name</label>
-          <input
-            type="text"
-            placeholder="Enter database name"
-            value={selectedDatabase}
-            onChange={(e) => onDatabaseSelect(e.target.value)}
-            disabled
           />
         </div>
       )}
