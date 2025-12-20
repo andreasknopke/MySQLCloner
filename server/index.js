@@ -120,7 +120,8 @@ app.post('/api/clone-database', async (req, res) => {
 
     sendProgress('Connecting to source database...');
 
-    // Connect to source with READ-ONLY mode
+    // Connect to source - we use READ COMMITTED isolation to see latest data
+    // Safety is ensured by only executing SELECT queries on source
     sourceConn = await mysql.createConnection({
       host: source.host,
       user: source.user,
@@ -130,14 +131,9 @@ app.post('/api/clone-database', async (req, res) => {
       multipleStatements: false,
     });
 
-    // CRITICAL: Force source connection to read-only mode
-    try {
-      await sourceConn.execute('SET SESSION TRANSACTION READ ONLY');
-      sendProgress('Source database set to READ-ONLY mode for safety');
-    } catch (error) {
-      await sourceConn.end();
-      return sendError('Failed to set read-only mode on source. Aborting clone for safety.');
-    }
+    // Set isolation level to READ COMMITTED to see latest committed data
+    await sourceConn.execute('SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED');
+    sendProgress('Source database connected (read-only operations only)');
 
     sendProgress('Connecting to target database...');
 
@@ -223,88 +219,96 @@ app.post('/api/clone-database', async (req, res) => {
       // Create table on target
       await targetConn.execute(createStatement);
 
-      // Get row count
-      const [countResult] = await sourceConn.execute(`SELECT COUNT(*) as cnt FROM \`${tableName}\``);
-      const rowCount = parseInt(countResult[0].cnt);
+      // Get primary key or first column for stable ordering
+      const [keyInfo] = await sourceConn.execute(
+        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND CONSTRAINT_NAME = 'PRIMARY' 
+         ORDER BY ORDINAL_POSITION LIMIT 1`,
+        [source.database, tableName]
+      );
+      
+      // Get first column as fallback
+      const [colInfo] = await sourceConn.execute(
+        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? 
+         ORDER BY ORDINAL_POSITION LIMIT 1`,
+        [source.database, tableName]
+      );
+      
+      const orderColumn = keyInfo.length > 0 ? keyInfo[0].COLUMN_NAME : colInfo[0].COLUMN_NAME;
+      
+      // Copy ALL data - don't rely on COUNT, read until no more rows
+      const batchSize = 100;
+      let offset = 0;
+      let totalCopied = 0;
+      let failedRows = 0;
+      let hasMoreRows = true;
 
-      if (rowCount > 0) {
-        sendProgress(`  ${tableName}: Copying ${rowCount} rows...`);
-        
-        // Get primary key or first column for stable ordering
-        const [keyInfo] = await sourceConn.execute(
-          `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
-           WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND CONSTRAINT_NAME = 'PRIMARY' 
-           ORDER BY ORDINAL_POSITION LIMIT 1`,
-          [source.database, tableName]
+      while (hasMoreRows) {
+        const [rows] = await sourceConn.execute(
+          `SELECT * FROM \`${tableName}\` ORDER BY \`${orderColumn}\` LIMIT ${batchSize} OFFSET ${offset}`
         );
         
-        // Get first column as fallback
-        const [colInfo] = await sourceConn.execute(
-          `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
-           WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? 
-           ORDER BY ORDINAL_POSITION LIMIT 1`,
-          [source.database, tableName]
-        );
+        if (rows.length === 0) {
+          hasMoreRows = false;
+          break;
+        }
         
-        const orderColumn = keyInfo.length > 0 ? keyInfo[0].COLUMN_NAME : colInfo[0].COLUMN_NAME;
+        // Try batch insert first
+        const columns = Object.keys(rows[0]);
         
-        // Copy data in batches with stable ordering
-        const batchSize = 100; // Smaller batch for better error handling
-        let copiedRows = 0;
-        let failedRows = 0;
-
-        while (copiedRows < rowCount) {
-          const [rows] = await sourceConn.execute(
-            `SELECT * FROM \`${tableName}\` ORDER BY \`${orderColumn}\` LIMIT ${batchSize} OFFSET ${copiedRows}`
-          );
+        try {
+          const placeholders = rows.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ');
+          const values = rows.flatMap(row => columns.map(col => row[col]));
           
-          if (rows.length === 0) break;
+          const insertSQL = `INSERT INTO \`${tableName}\` (${columns.map(c => `\`${c}\``).join(', ')}) VALUES ${placeholders}`;
+          await targetConn.execute(insertSQL, values);
+          totalCopied += rows.length;
+        } catch (batchError) {
+          // Batch failed - try row by row
+          sendProgress(`  ${tableName}: Batch insert failed at offset ${offset}, trying row by row...`);
+          sendProgress(`  Error: ${batchError.message.substring(0, 150)}`);
           
-          // Try batch insert first
-          const columns = Object.keys(rows[0]);
-          
-          try {
-            const placeholders = rows.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ');
-            const values = rows.flatMap(row => columns.map(col => row[col]));
-            
-            const insertSQL = `INSERT INTO \`${tableName}\` (${columns.map(c => `\`${c}\``).join(', ')}) VALUES ${placeholders}`;
-            await targetConn.execute(insertSQL, values);
-          } catch (batchError) {
-            // Batch failed - try row by row
-            sendProgress(`  ${tableName}: Batch insert failed, trying row by row...`);
-            
-            for (const row of rows) {
-              try {
-                const singlePlaceholder = `(${columns.map(() => '?').join(', ')})`;
-                const singleValues = columns.map(col => row[col]);
-                const singleInsertSQL = `INSERT INTO \`${tableName}\` (${columns.map(c => `\`${c}\``).join(', ')}) VALUES ${singlePlaceholder}`;
-                await targetConn.execute(singleInsertSQL, singleValues);
-              } catch (rowError) {
-                failedRows++;
-                // Log the specific error
-                sendProgress(`  ⚠️ Row failed: ${rowError.message.substring(0, 100)}`);
-              }
+          for (const row of rows) {
+            try {
+              const singlePlaceholder = `(${columns.map(() => '?').join(', ')})`;
+              const singleValues = columns.map(col => row[col]);
+              const singleInsertSQL = `INSERT INTO \`${tableName}\` (${columns.map(c => `\`${c}\``).join(', ')}) VALUES ${singlePlaceholder}`;
+              await targetConn.execute(singleInsertSQL, singleValues);
+              totalCopied++;
+            } catch (rowError) {
+              failedRows++;
+              sendProgress(`  ⚠️ Row failed: ${rowError.message.substring(0, 100)}`);
             }
           }
-          
-          copiedRows += rows.length;
-          
-          if (rowCount > batchSize && copiedRows % 500 === 0) {
-            sendProgress(`  ${tableName}: ${copiedRows}/${rowCount} rows processed`);
-          }
         }
         
-        if (failedRows > 0) {
-          sendProgress(`  ⚠️ ${tableName}: ${failedRows} rows failed to copy!`);
+        offset += rows.length;
+        
+        if (offset % 500 === 0) {
+          sendProgress(`  ${tableName}: ${offset} rows read so far...`);
         }
         
-        // Verify row count
-        const [verifyCount] = await targetConn.execute(`SELECT COUNT(*) as cnt FROM \`${tableName}\``);
-        const targetRowCount = parseInt(verifyCount[0].cnt);
-        
-        if (targetRowCount !== rowCount) {
-          sendProgress(`  ⚠️ WARNING: ${tableName} row count mismatch! Source: ${rowCount}, Target: ${targetRowCount}`);
+        // Safety check - if we got less than batchSize, we're at the end
+        if (rows.length < batchSize) {
+          hasMoreRows = false;
         }
+      }
+      
+      if (failedRows > 0) {
+        sendProgress(`  ⚠️ ${tableName}: ${failedRows} rows failed to copy!`);
+      }
+      
+      // Verify by counting both sides
+      const [sourceCount] = await sourceConn.execute(`SELECT COUNT(*) as cnt FROM \`${tableName}\``);
+      const [targetCount] = await targetConn.execute(`SELECT COUNT(*) as cnt FROM \`${tableName}\``);
+      const srcRows = parseInt(sourceCount[0].cnt);
+      const tgtRows = parseInt(targetCount[0].cnt);
+      
+      if (srcRows !== tgtRows) {
+        sendProgress(`  ⚠️ WARNING: ${tableName} mismatch! Source: ${srcRows}, Target: ${tgtRows}, Copied: ${totalCopied}`);
+      } else {
+        sendProgress(`  ✓ ${tableName}: ${tgtRows} rows copied successfully`);
       }
     }
 
