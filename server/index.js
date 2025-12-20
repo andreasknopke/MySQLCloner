@@ -91,6 +91,10 @@ app.post('/api/test-connection', async (req, res) => {
 
 // Clone database endpoint
 app.post('/api/clone-database', async (req, res) => {
+  let sourceConn = null;
+  let targetConn = null;
+  let dumpFile = null;
+
   try {
     const { source, target } = req.body;
 
@@ -103,7 +107,7 @@ app.post('/api/clone-database', async (req, res) => {
     }
 
     // Test source connection with READ-ONLY enforcement
-    const sourceConn = await mysql.createConnection({
+    sourceConn = await mysql.createConnection({
       host: source.host,
       user: source.user,
       password: source.password,
@@ -136,7 +140,7 @@ app.post('/api/clone-database', async (req, res) => {
     }
 
     // Test target connection
-    const targetConn = await mysql.createConnection({
+    targetConn = await mysql.createConnection({
       host: target.host,
       user: target.user,
       password: target.password,
@@ -144,10 +148,12 @@ app.post('/api/clone-database', async (req, res) => {
     });
 
     // Create dump file path
-    const dumpFile = `/tmp/mysql_dump_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.sql`;
+    dumpFile = `/tmp/mysql_dump_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.sql`;
 
     // Send initial status
     res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Transfer-Encoding', 'chunked');
+    
     res.write(JSON.stringify({ 
       status: 'progress', 
       message: 'Source database set to read-only mode. Starting clone...' 
@@ -164,9 +170,21 @@ app.post('/api/clone-database', async (req, res) => {
     // --lock-tables acquires READ LOCAL lock (non-blocking reads)
     // --single-transaction uses consistent snapshot
     // --ssl-mode=DISABLED needed for Railway's self-signed certificates
-    const dumpCommand = `mysqldump -h ${source.host} -P ${source.port || 3306} -u ${source.user} --password="${source.password}" --ssl-mode=DISABLED --single-transaction --lock-tables --routines --triggers --events --skip-add-drop-database --skip-add-locks ${source.database} > ${dumpFile}`;
+    const dumpCommand = `mysqldump -h ${source.host} -P ${source.port || 3306} -u ${source.user} --password="${source.password}" --ssl-mode=DISABLED --single-transaction --lock-tables --routines --triggers --events --skip-add-drop-database --skip-add-locks ${source.database} > "${dumpFile}"`;
     
-    await execPromise(dumpCommand, { maxBuffer: 100 * 1024 * 1024 });
+    try {
+      const { stdout, stderr } = await execPromise(dumpCommand, { maxBuffer: 100 * 1024 * 1024 });
+      if (stderr && !stderr.includes('Deprecated program name')) {
+        console.warn('mysqldump stderr:', stderr);
+      }
+    } catch (execError) {
+      res.write(JSON.stringify({ 
+        status: 'error', 
+        message: `Dump failed: ${execError.message}` 
+      }) + '\n');
+      res.end();
+      return;
+    }
 
     res.write(JSON.stringify({ 
       status: 'progress', 
@@ -195,9 +213,21 @@ app.post('/api/clone-database', async (req, res) => {
 
     // Step 3: Restore dump to target
     // --ssl-mode=DISABLED needed for Railway's self-signed certificates
-    const restoreCommand = `mysql -h ${target.host} -P ${target.port || 3306} -u ${target.user} --password="${target.password}" --ssl-mode=DISABLED ${target.database} < ${dumpFile}`;
+    const restoreCommand = `mysql -h ${target.host} -P ${target.port || 3306} -u ${target.user} --password="${target.password}" --ssl-mode=DISABLED ${target.database} < "${dumpFile}"`;
     
-    await execPromise(restoreCommand, { maxBuffer: 100 * 1024 * 1024 });
+    try {
+      const { stdout, stderr } = await execPromise(restoreCommand, { maxBuffer: 100 * 1024 * 1024 });
+      if (stderr && !stderr.includes('Deprecated')) {
+        console.warn('mysql restore stderr:', stderr);
+      }
+    } catch (execError) {
+      res.write(JSON.stringify({ 
+        status: 'error', 
+        message: `Restore failed: ${execError.message}` 
+      }) + '\n');
+      res.end();
+      return;
+    }
 
     res.write(JSON.stringify({ 
       status: 'progress', 
@@ -205,13 +235,21 @@ app.post('/api/clone-database', async (req, res) => {
     }) + '\n');
 
     // Cleanup
-    if (fs.existsSync(dumpFile)) {
-      fs.unlinkSync(dumpFile);
+    if (dumpFile && fs.existsSync(dumpFile)) {
+      try {
+        fs.unlinkSync(dumpFile);
+      } catch (cleanupError) {
+        console.warn('Could not delete dump file:', cleanupError.message);
+      }
     }
 
     // Close connections
-    await sourceConn.end();
-    await targetConn.end();
+    if (sourceConn) {
+      await sourceConn.end();
+    }
+    if (targetConn) {
+      await targetConn.end();
+    }
 
     res.write(JSON.stringify({ 
       status: 'success', 
@@ -221,11 +259,45 @@ app.post('/api/clone-database', async (req, res) => {
 
   } catch (error) {
     console.error('Clone error:', error);
-    res.write(JSON.stringify({ 
-      status: 'error', 
-      message: error.message 
-    }) + '\n');
-    res.end();
+    
+    // Clean up on error
+    if (dumpFile && fs.existsSync(dumpFile)) {
+      try {
+        fs.unlinkSync(dumpFile);
+      } catch (e) {
+        console.warn('Could not delete dump file on error:', e.message);
+      }
+    }
+
+    if (sourceConn) {
+      try {
+        await sourceConn.end();
+      } catch (e) {
+        console.warn('Could not close source connection:', e.message);
+      }
+    }
+
+    if (targetConn) {
+      try {
+        await targetConn.end();
+      } catch (e) {
+        console.warn('Could not close target connection:', e.message);
+      }
+    }
+
+    // Only write response if headers haven't been sent
+    if (!res.headersSent) {
+      res.status(500).json({ 
+        success: false, 
+        message: error.message 
+      });
+    } else {
+      res.write(JSON.stringify({ 
+        status: 'error', 
+        message: error.message 
+      }) + '\n');
+      res.end();
+    }
   }
 });
 
