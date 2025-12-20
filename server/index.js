@@ -163,8 +163,8 @@ app.post('/api/clone-database', async (req, res) => {
     // --skip-add-drop-database ensures we don't drop the source DB
     // --lock-tables acquires READ LOCAL lock (non-blocking reads)
     // --single-transaction uses consistent snapshot
-    // --no-data=false ensures data is included
-    const dumpCommand = `mysqldump -h ${source.host} -P ${source.port || 3306} -u ${source.user} --password="${source.password}" --single-transaction --lock-tables --routines --triggers --events --skip-add-drop-database --skip-add-locks ${source.database} > ${dumpFile}`;
+    // --ssl-mode=DISABLED needed for Railway's self-signed certificates
+    const dumpCommand = `mysqldump -h ${source.host} -P ${source.port || 3306} -u ${source.user} --password="${source.password}" --ssl-mode=DISABLED --single-transaction --lock-tables --routines --triggers --events --skip-add-drop-database --skip-add-locks ${source.database} > ${dumpFile}`;
     
     await execPromise(dumpCommand, { maxBuffer: 100 * 1024 * 1024 });
 
@@ -194,7 +194,8 @@ app.post('/api/clone-database', async (req, res) => {
     }) + '\n');
 
     // Step 3: Restore dump to target
-    const restoreCommand = `mysql -h ${target.host} -P ${target.port || 3306} -u ${target.user} --password="${target.password}" ${target.database} < ${dumpFile}`;
+    // --ssl-mode=DISABLED needed for Railway's self-signed certificates
+    const restoreCommand = `mysql -h ${target.host} -P ${target.port || 3306} -u ${target.user} --password="${target.password}" --ssl-mode=DISABLED ${target.database} < ${dumpFile}`;
     
     await execPromise(restoreCommand, { maxBuffer: 100 * 1024 * 1024 });
 

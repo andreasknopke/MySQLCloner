@@ -7,12 +7,12 @@ function ConfirmClone({ source, target, onConfirm, onCancel }) {
 
   // Generate mysqldump command (sanitized for display)
   const dumpCommand = `mysqldump -h ${source.host} -P ${source.port || 3306} -u ${source.user} \\
-  --single-transaction --lock-tables --routines --triggers --events \\
+  --ssl-mode=DISABLED --single-transaction --lock-tables --routines --triggers --events \\
   --skip-add-drop-database --skip-add-locks ${sourceDbName} > /tmp/mysql_dump.sql`;
 
   // Generate mysql restore command (sanitized for display)
   const restoreCommand = `mysql -h ${target.host} -P ${target.port || 3306} -u ${target.user} \\
-  ${targetDbName} < /tmp/mysql_dump.sql`;
+  --ssl-mode=DISABLED ${targetDbName} < /tmp/mysql_dump.sql`;
 
   return (
     <div className="confirm-clone-overlay">
