@@ -249,8 +249,9 @@ app.post('/api/clone-database', async (req, res) => {
         const orderColumn = keyInfo.length > 0 ? keyInfo[0].COLUMN_NAME : colInfo[0].COLUMN_NAME;
         
         // Copy data in batches with stable ordering
-        const batchSize = 500;
+        const batchSize = 100; // Smaller batch for better error handling
         let copiedRows = 0;
+        let failedRows = 0;
 
         while (copiedRows < rowCount) {
           const [rows] = await sourceConn.execute(
@@ -259,19 +260,42 @@ app.post('/api/clone-database', async (req, res) => {
           
           if (rows.length === 0) break;
           
-          // Build INSERT statement
+          // Try batch insert first
           const columns = Object.keys(rows[0]);
-          const placeholders = rows.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ');
-          const values = rows.flatMap(row => columns.map(col => row[col]));
           
-          const insertSQL = `INSERT INTO \`${tableName}\` (${columns.map(c => `\`${c}\``).join(', ')}) VALUES ${placeholders}`;
-          await targetConn.execute(insertSQL, values);
+          try {
+            const placeholders = rows.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ');
+            const values = rows.flatMap(row => columns.map(col => row[col]));
+            
+            const insertSQL = `INSERT INTO \`${tableName}\` (${columns.map(c => `\`${c}\``).join(', ')}) VALUES ${placeholders}`;
+            await targetConn.execute(insertSQL, values);
+          } catch (batchError) {
+            // Batch failed - try row by row
+            sendProgress(`  ${tableName}: Batch insert failed, trying row by row...`);
+            
+            for (const row of rows) {
+              try {
+                const singlePlaceholder = `(${columns.map(() => '?').join(', ')})`;
+                const singleValues = columns.map(col => row[col]);
+                const singleInsertSQL = `INSERT INTO \`${tableName}\` (${columns.map(c => `\`${c}\``).join(', ')}) VALUES ${singlePlaceholder}`;
+                await targetConn.execute(singleInsertSQL, singleValues);
+              } catch (rowError) {
+                failedRows++;
+                // Log the specific error
+                sendProgress(`  ⚠️ Row failed: ${rowError.message.substring(0, 100)}`);
+              }
+            }
+          }
           
           copiedRows += rows.length;
           
-          if (rowCount > batchSize) {
-            sendProgress(`  ${tableName}: ${copiedRows}/${rowCount} rows copied`);
+          if (rowCount > batchSize && copiedRows % 500 === 0) {
+            sendProgress(`  ${tableName}: ${copiedRows}/${rowCount} rows processed`);
           }
+        }
+        
+        if (failedRows > 0) {
+          sendProgress(`  ⚠️ ${tableName}: ${failedRows} rows failed to copy!`);
         }
         
         // Verify row count
