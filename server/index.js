@@ -120,8 +120,7 @@ app.post('/api/clone-database', async (req, res) => {
 
     sendProgress('Connecting to source database...');
 
-    // Connect to source - we use READ COMMITTED isolation to see latest data
-    // Safety is ensured by only executing SELECT queries on source
+    // Connect to source - ENFORCED READ-ONLY for safety
     sourceConn = await mysql.createConnection({
       host: source.host,
       user: source.user,
@@ -131,9 +130,9 @@ app.post('/api/clone-database', async (req, res) => {
       multipleStatements: false,
     });
 
-    // Set isolation level to READ COMMITTED to see latest committed data
-    await sourceConn.execute('SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED');
-    sendProgress('Source database connected (read-only operations only)');
+    // CRITICAL: Enforce read-only mode on source connection
+    await sourceConn.execute('SET SESSION TRANSACTION READ ONLY');
+    sendProgress('Source database connected (READ-ONLY mode enforced)');
 
     sendProgress('Connecting to target database...');
 
