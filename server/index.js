@@ -219,15 +219,7 @@ app.post('/api/clone-database', async (req, res) => {
       // Create table on target
       await targetConn.execute(createStatement);
 
-      // Get primary key or first column for stable ordering
-      const [keyInfo] = await sourceConn.execute(
-        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
-         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND CONSTRAINT_NAME = 'PRIMARY' 
-         ORDER BY ORDINAL_POSITION LIMIT 1`,
-        [source.database, tableName]
-      );
-      
-      // Get first column as fallback
+      // Get first column as fallback for ordering
       const [colInfo] = await sourceConn.execute(
         `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? 
@@ -235,22 +227,40 @@ app.post('/api/clone-database', async (req, res) => {
         [source.database, tableName]
       );
       
-      const orderColumn = keyInfo.length > 0 ? keyInfo[0].COLUMN_NAME : colInfo[0].COLUMN_NAME;
+      // Get ALL primary key columns for unique ordering
+      const [allKeyInfo] = await sourceConn.execute(
+        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND CONSTRAINT_NAME = 'PRIMARY' 
+         ORDER BY ORDINAL_POSITION`,
+        [source.database, tableName]
+      );
       
-      // Copy ALL data - don't rely on COUNT, read until no more rows
-      const batchSize = 100;
+      // Build ORDER BY with all PK columns, or fallback to first column
+      let orderByClause;
+      if (allKeyInfo.length > 0) {
+        orderByClause = allKeyInfo.map(k => `\`${k.COLUMN_NAME}\``).join(', ');
+      } else {
+        orderByClause = `\`${colInfo[0].COLUMN_NAME}\``;
+      }
+      
+      // First, count rows in source to verify later
+      const [initialCount] = await sourceConn.execute(`SELECT COUNT(*) as cnt FROM \`${tableName}\``);
+      const expectedRows = parseInt(initialCount[0].cnt);
+      sendProgress(`  ${tableName}: ${expectedRows} rows to copy`);
+      
+      // Use simple pagination - read ALL data from source first to avoid any issues
+      const batchSize = 500;
       let offset = 0;
       let totalCopied = 0;
       let failedRows = 0;
-      let hasMoreRows = true;
-
-      while (hasMoreRows) {
+      
+      // Read and insert in batches
+      while (offset < expectedRows || offset === 0) {
         const [rows] = await sourceConn.execute(
-          `SELECT * FROM \`${tableName}\` ORDER BY \`${orderColumn}\` LIMIT ${batchSize} OFFSET ${offset}`
+          `SELECT * FROM \`${tableName}\` ORDER BY ${orderByClause} LIMIT ${batchSize} OFFSET ${offset}`
         );
         
         if (rows.length === 0) {
-          hasMoreRows = false;
           break;
         }
         
@@ -266,7 +276,7 @@ app.post('/api/clone-database', async (req, res) => {
           totalCopied += rows.length;
         } catch (batchError) {
           // Batch failed - try row by row
-          sendProgress(`  ${tableName}: Batch insert failed at offset ${offset}, trying row by row...`);
+          sendProgress(`  ${tableName}: Batch insert failed, trying row by row...`);
           sendProgress(`  Error: ${batchError.message.substring(0, 150)}`);
           
           for (const row of rows) {
@@ -278,20 +288,20 @@ app.post('/api/clone-database', async (req, res) => {
               totalCopied++;
             } catch (rowError) {
               failedRows++;
-              sendProgress(`  ⚠️ Row failed: ${rowError.message.substring(0, 100)}`);
+              sendProgress(`  ⚠️ Row ${offset + failedRows} failed: ${rowError.message.substring(0, 100)}`);
             }
           }
         }
         
         offset += rows.length;
         
-        if (offset % 500 === 0) {
-          sendProgress(`  ${tableName}: ${offset} rows read so far...`);
+        if (offset % 1000 === 0 || offset === expectedRows) {
+          sendProgress(`  ${tableName}: ${offset}/${expectedRows} rows processed...`);
         }
         
-        // Safety check - if we got less than batchSize, we're at the end
+        // Safety: if we got less than batchSize, there's no more data
         if (rows.length < batchSize) {
-          hasMoreRows = false;
+          break;
         }
       }
       
