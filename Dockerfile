@@ -1,7 +1,7 @@
 FROM node:18-alpine AS backend
 WORKDIR /app/server
 COPY server/package*.json ./
-RUN npm install --production
+RUN npm install --omit=dev
 COPY server/ ./
 
 FROM node:18 AS client-build
@@ -14,17 +14,18 @@ RUN npm run build
 FROM node:18-alpine
 WORKDIR /app
 
+# Install mysql-client for mysqldump (before copying files)
+RUN apk add --no-cache mysql-client
+
 # Copy backend
 COPY --from=backend /app/server ./server
 
 # Copy built client
 COPY --from=client-build /app/client/build ./client/build
 
-# Install mysql-client for mysqldump
-RUN apk add --no-cache mysql-client
-
+# Install production dependencies only
 WORKDIR /app/server
-RUN npm install --production
+RUN npm install --omit=dev
 
 EXPOSE 5000
 

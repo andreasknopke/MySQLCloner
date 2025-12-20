@@ -21,12 +21,18 @@ app.use(express.json());
 // Serve static React build in production
 if (process.env.NODE_ENV === 'production') {
   const buildPath = path.join(__dirname, '../client/build');
-  app.use(express.static(buildPath));
   
-  // Fallback to index.html for client-side routing
-  app.get('/', (req, res) => {
-    res.sendFile(path.join(buildPath, 'index.html'));
-  });
+  // Only serve static files if build directory exists
+  if (fs.existsSync(buildPath)) {
+    app.use(express.static(buildPath));
+    
+    // Fallback to index.html for client-side routing
+    app.get('/', (req, res) => {
+      res.sendFile(path.join(buildPath, 'index.html'));
+    });
+  } else {
+    console.warn('⚠️  Client build directory not found at', buildPath);
+  }
 }
 
 const PORT = process.env.PORT || 5000;
