@@ -11,11 +11,14 @@ RUN npm install
 COPY client/ ./
 RUN npm run build
 
-FROM node:18-alpine
+# Use Debian-based image for proper MySQL client support (caching_sha2_password plugin)
+FROM node:18-slim
 WORKDIR /app
 
-# Install mysql-client for mysqldump (before copying files)
-RUN apk add --no-cache mysql-client
+# Install MySQL client (real MySQL, not MariaDB) for caching_sha2_password support
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends mysql-client && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy backend
 COPY --from=backend /app/server ./server
