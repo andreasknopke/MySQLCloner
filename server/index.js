@@ -158,6 +158,50 @@ app.post('/api/clone-database', async (req, res) => {
     // Set SQL mode to allow exact data copying (including zero dates, etc.)
     await targetConn.execute("SET SESSION sql_mode = 'NO_ENGINE_SUBSTITUTION'");
     
+    // Disable foreign key checks on target
+    await targetConn.execute('SET FOREIGN_KEY_CHECKS = 0');
+
+    // IMPORTANT: Drop ALL existing tables, views, procedures, functions in target first
+    sendProgress('Cleaning target database (dropping all existing objects)...');
+    
+    // Drop all views first
+    const [existingViews] = await targetConn.execute(
+      `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_SCHEMA = ?`,
+      [target.database]
+    );
+    for (const view of existingViews) {
+      await targetConn.execute(`DROP VIEW IF EXISTS \`${view.TABLE_NAME}\``);
+    }
+    
+    // Drop all tables
+    const [existingTables] = await targetConn.execute(
+      `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'`,
+      [target.database]
+    );
+    for (const table of existingTables) {
+      await targetConn.execute(`DROP TABLE IF EXISTS \`${table.TABLE_NAME}\``);
+    }
+    
+    // Drop all procedures
+    const [existingProcs] = await targetConn.execute(
+      `SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_SCHEMA = ? AND ROUTINE_TYPE = 'PROCEDURE'`,
+      [target.database]
+    );
+    for (const proc of existingProcs) {
+      await targetConn.execute(`DROP PROCEDURE IF EXISTS \`${proc.ROUTINE_NAME}\``);
+    }
+    
+    // Drop all functions
+    const [existingFuncs] = await targetConn.execute(
+      `SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_SCHEMA = ? AND ROUTINE_TYPE = 'FUNCTION'`,
+      [target.database]
+    );
+    for (const func of existingFuncs) {
+      await targetConn.execute(`DROP FUNCTION IF EXISTS \`${func.ROUTINE_NAME}\``);
+    }
+    
+    sendProgress(`Cleaned target database: removed ${existingTables.length} tables, ${existingViews.length} views`);
+    
     // Get all tables from source
     sendProgress('Fetching table list from source...');
     const [tables] = await sourceConn.execute(
@@ -166,9 +210,6 @@ app.post('/api/clone-database', async (req, res) => {
     );
 
     sendProgress(`Found ${tables.length} tables to clone`);
-
-    // Disable foreign key checks on target
-    await targetConn.execute('SET FOREIGN_KEY_CHECKS = 0');
 
     // Clone each table
     for (let i = 0; i < tables.length; i++) {
@@ -179,36 +220,66 @@ app.post('/api/clone-database', async (req, res) => {
       const [createResult] = await sourceConn.execute(`SHOW CREATE TABLE \`${tableName}\``);
       const createStatement = createResult[0]['Create Table'];
 
-      // Drop table on target if exists and recreate
-      await targetConn.execute(`DROP TABLE IF EXISTS \`${tableName}\``);
+      // Create table on target
       await targetConn.execute(createStatement);
 
       // Get row count
       const [countResult] = await sourceConn.execute(`SELECT COUNT(*) as cnt FROM \`${tableName}\``);
-      const rowCount = countResult[0].cnt;
+      const rowCount = parseInt(countResult[0].cnt);
 
       if (rowCount > 0) {
-        // Copy data in batches
-        const batchSize = 1000;
-        let offset = 0;
+        sendProgress(`  ${tableName}: Copying ${rowCount} rows...`);
+        
+        // Get primary key or first column for stable ordering
+        const [keyInfo] = await sourceConn.execute(
+          `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE 
+           WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND CONSTRAINT_NAME = 'PRIMARY' 
+           ORDER BY ORDINAL_POSITION LIMIT 1`,
+          [source.database, tableName]
+        );
+        
+        // Get first column as fallback
+        const [colInfo] = await sourceConn.execute(
+          `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+           WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? 
+           ORDER BY ORDINAL_POSITION LIMIT 1`,
+          [source.database, tableName]
+        );
+        
+        const orderColumn = keyInfo.length > 0 ? keyInfo[0].COLUMN_NAME : colInfo[0].COLUMN_NAME;
+        
+        // Copy data in batches with stable ordering
+        const batchSize = 500;
+        let copiedRows = 0;
 
-        while (offset < rowCount) {
-          const [rows] = await sourceConn.execute(`SELECT * FROM \`${tableName}\` LIMIT ${batchSize} OFFSET ${offset}`);
+        while (copiedRows < rowCount) {
+          const [rows] = await sourceConn.execute(
+            `SELECT * FROM \`${tableName}\` ORDER BY \`${orderColumn}\` LIMIT ${batchSize} OFFSET ${copiedRows}`
+          );
           
-          if (rows.length > 0) {
-            // Build INSERT statement
-            const columns = Object.keys(rows[0]);
-            const placeholders = rows.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ');
-            const values = rows.flatMap(row => columns.map(col => row[col]));
-            
-            const insertSQL = `INSERT INTO \`${tableName}\` (${columns.map(c => `\`${c}\``).join(', ')}) VALUES ${placeholders}`;
-            await targetConn.execute(insertSQL, values);
-          }
-
-          offset += batchSize;
+          if (rows.length === 0) break;
+          
+          // Build INSERT statement
+          const columns = Object.keys(rows[0]);
+          const placeholders = rows.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ');
+          const values = rows.flatMap(row => columns.map(col => row[col]));
+          
+          const insertSQL = `INSERT INTO \`${tableName}\` (${columns.map(c => `\`${c}\``).join(', ')}) VALUES ${placeholders}`;
+          await targetConn.execute(insertSQL, values);
+          
+          copiedRows += rows.length;
+          
           if (rowCount > batchSize) {
-            sendProgress(`  ${tableName}: ${Math.min(offset, rowCount)}/${rowCount} rows copied`);
+            sendProgress(`  ${tableName}: ${copiedRows}/${rowCount} rows copied`);
           }
+        }
+        
+        // Verify row count
+        const [verifyCount] = await targetConn.execute(`SELECT COUNT(*) as cnt FROM \`${tableName}\``);
+        const targetRowCount = parseInt(verifyCount[0].cnt);
+        
+        if (targetRowCount !== rowCount) {
+          sendProgress(`  ⚠️ WARNING: ${tableName} row count mismatch! Source: ${rowCount}, Target: ${targetRowCount}`);
         }
       }
     }
