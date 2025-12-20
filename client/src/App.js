@@ -113,30 +113,65 @@ function App() {
     setLogs([{ type: 'info', message: 'Starting database clone...' }]);
 
     try {
-      const response = await axios.post(`${API_URL}/clone-database`, { source, target }, {
-        responseType: 'text',
-        onDownloadProgress: (event) => {
-          const text = event.currentTarget.response;
-          const lines = text.trim().split('\n');
-          const newLogs = lines.map(line => {
+      const response = await fetch(`${API_URL}/clone-database`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ source, target }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+      }
+
+      // Process the response stream line by line
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let currentData = '';
+      const newLogs = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        currentData += decoder.decode(value, { stream: true });
+        const lines = currentData.split('\n');
+
+        // Keep the last incomplete line
+        currentData = lines.pop() || '';
+
+        lines.forEach(line => {
+          if (line.trim()) {
             try {
               const parsed = JSON.parse(line);
-              return parsed;
+              newLogs.push(parsed);
+              setLogs([...newLogs]);
             } catch {
-              return null;
+              // Skip invalid JSON lines
             }
-          }).filter(log => log !== null);
-          
-          setLogs(newLogs);
+          }
+        });
+      }
+
+      // Handle any remaining data
+      if (currentData.trim()) {
+        try {
+          const parsed = JSON.parse(currentData);
+          newLogs.push(parsed);
+          setLogs([...newLogs]);
+        } catch {
+          // Skip invalid JSON
         }
-      });
+      }
 
       setCloning(false);
     } catch (error) {
       setCloning(false);
       setLogs(prev => [...prev, { 
         type: 'error', 
-        message: error.response?.data?.message || error.message 
+        message: error.message 
       }]);
     }
   };
