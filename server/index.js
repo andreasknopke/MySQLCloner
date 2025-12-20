@@ -485,22 +485,34 @@ app.post('/api/get-database-stats', async (req, res) => {
       }
     }
 
-    // Get table count
-    const [tableCount] = await connection.execute(
-      `SELECT COUNT(*) as count FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?`,
+    // Get table list first
+    const [tableList] = await connection.execute(
+      `SELECT TABLE_NAME, ROUND(((data_length + index_length) / 1024 / 1024), 2) as size_mb
+       FROM information_schema.TABLES 
+       WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'
+       ORDER BY TABLE_NAME`,
       [database]
     );
 
-    // Get table list with row counts
-    const [tables] = await connection.execute(`
-      SELECT 
-        TABLE_NAME,
-        TABLE_ROWS,
-        ROUND(((data_length + index_length) / 1024 / 1024), 2) as size_mb
-      FROM information_schema.TABLES 
-      WHERE TABLE_SCHEMA = ?
-      ORDER BY TABLE_ROWS DESC
-    `, [database]);
+    // Get EXACT row counts using COUNT(*) for each table
+    const tables = [];
+    let totalRows = 0;
+    
+    for (const table of tableList) {
+      const [countResult] = await connection.execute(
+        `SELECT COUNT(*) as cnt FROM \`${table.TABLE_NAME}\``
+      );
+      const rowCount = parseInt(countResult[0].cnt);
+      tables.push({
+        TABLE_NAME: table.TABLE_NAME,
+        TABLE_ROWS: rowCount,
+        size_mb: table.size_mb
+      });
+      totalRows += rowCount;
+    }
+    
+    // Sort by row count descending
+    tables.sort((a, b) => b.TABLE_ROWS - a.TABLE_ROWS);
 
     // Get database size
     const [dbSize] = await connection.execute(`
@@ -510,22 +522,15 @@ app.post('/api/get-database-stats', async (req, res) => {
       WHERE TABLE_SCHEMA = ?
     `, [database]);
 
-    // Get total row count
-    const [totalRows] = await connection.execute(`
-      SELECT SUM(TABLE_ROWS) as total_rows
-      FROM information_schema.TABLES 
-      WHERE TABLE_SCHEMA = ?
-    `, [database]);
-
     await connection.end();
 
     res.json({ 
       success: true, 
       stats: {
-        tableCount: tableCount[0]?.count || 0,
-        totalRows: totalRows[0]?.total_rows || 0,
+        tableCount: tableList.length,
+        totalRows: totalRows,
         sizeInMB: dbSize[0]?.size_mb || 0,
-        tables: tables || []
+        tables: tables
       }
     });
   } catch (error) {
