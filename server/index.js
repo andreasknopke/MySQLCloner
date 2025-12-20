@@ -155,6 +155,9 @@ app.post('/api/clone-database', async (req, res) => {
     await targetConn.execute(`CREATE DATABASE IF NOT EXISTS \`${target.database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
     await targetConn.changeUser({ database: target.database });
 
+    // Set SQL mode to allow exact data copying (including zero dates, etc.)
+    await targetConn.execute("SET SESSION sql_mode = 'NO_ENGINE_SUBSTITUTION'");
+    
     // Get all tables from source
     sendProgress('Fetching table list from source...');
     const [tables] = await sourceConn.execute(
