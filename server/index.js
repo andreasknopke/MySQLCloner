@@ -169,8 +169,8 @@ app.post('/api/clone-database', async (req, res) => {
     // --skip-add-drop-database ensures we don't drop the source DB
     // --lock-tables acquires READ LOCAL lock (non-blocking reads)
     // --single-transaction uses consistent snapshot
-    // MariaDB (used in Railway) will automatically handle SSL/TLS fallback
-    const dumpCommand = `mysqldump -h ${source.host} -P ${source.port || 3306} -u ${source.user} --password="${source.password}" --single-transaction --lock-tables --routines --triggers --events --skip-add-drop-database --skip-add-locks ${source.database} > "${dumpFile}"`;
+    // --skip-ssl for MariaDB to bypass self-signed certificate issues
+    const dumpCommand = `mysqldump -h ${source.host} -P ${source.port || 3306} -u ${source.user} --password="${source.password}" --skip-ssl --single-transaction --lock-tables --routines --triggers --events --skip-add-drop-database --skip-add-locks ${source.database} > "${dumpFile}"`;
     
     try {
       const { stdout, stderr } = await execPromise(dumpCommand, { maxBuffer: 100 * 1024 * 1024 });
@@ -212,8 +212,8 @@ app.post('/api/clone-database', async (req, res) => {
     }) + '\n');
 
     // Step 3: Restore dump to target
-    // MariaDB (used in Railway) will automatically handle SSL/TLS fallback
-    const restoreCommand = `mysql -h ${target.host} -P ${target.port || 3306} -u ${target.user} --password="${target.password}" ${target.database} < "${dumpFile}"`;
+    // --skip-ssl for MariaDB to bypass self-signed certificate issues
+    const restoreCommand = `mysql -h ${target.host} -P ${target.port || 3306} -u ${target.user} --password="${target.password}" --skip-ssl ${target.database} < "${dumpFile}"`;
     
     try {
       const { stdout, stderr } = await execPromise(restoreCommand, { maxBuffer: 100 * 1024 * 1024 });
