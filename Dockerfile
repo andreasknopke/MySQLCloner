@@ -15,9 +15,14 @@ RUN npm run build
 FROM node:18-slim
 WORKDIR /app
 
-# Install MySQL client (real MySQL, not MariaDB) for caching_sha2_password support
+# Install MySQL 8.0 client from Oracle's official repository
 RUN apt-get update && \
+    apt-get install -y --no-install-recommends wget gnupg && \
+    wget https://dev.mysql.com/get/mysql-apt-config_0.8.29-1_all.deb && \
+    DEBIAN_FRONTEND=noninteractive dpkg -i mysql-apt-config_0.8.29-1_all.deb && \
+    apt-get update && \
     apt-get install -y --no-install-recommends mysql-client && \
+    rm -f mysql-apt-config_0.8.29-1_all.deb && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy backend
