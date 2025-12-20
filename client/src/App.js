@@ -4,6 +4,7 @@ import './App.css';
 import CredentialForm from './components/CredentialForm';
 import ProgressLog from './components/ProgressLog';
 import DatabaseStats from './components/DatabaseStats';
+import ConfirmClone from './components/ConfirmClone';
 
 function App() {
   const [source, setSource] = useState({
@@ -29,6 +30,7 @@ function App() {
   const [sourceDatabases, setSourceDatabases] = useState([]);
   const [sourceStats, setSourceStats] = useState(null);
   const [targetStats, setTargetStats] = useState(null);
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
 
   // Dynamically determine API URL based on environment
   const API_URL = process.env.REACT_APP_API_URL || 
@@ -91,7 +93,7 @@ function App() {
     }
   };
 
-  const cloneDatabase = async () => {
+  const handleInitiateClone = () => {
     if (!sourceConnected || !targetConnected) {
       setLogs([...logs, { type: 'error', message: 'Please test both connections first!' }]);
       return;
@@ -102,6 +104,11 @@ function App() {
       return;
     }
 
+    setShowConfirmDialog(true);
+  };
+
+  const cloneDatabase = async () => {
+    setShowConfirmDialog(false);
     setCloning(true);
     setLogs([{ type: 'info', message: 'Starting database clone...' }]);
 
@@ -179,12 +186,21 @@ function App() {
           <div className="action-section">
             <button 
               className={`clone-btn ${cloning ? 'loading' : ''} ${sourceConnected && targetConnected ? '' : 'disabled'}`}
-              onClick={cloneDatabase}
+              onClick={handleInitiateClone}
               disabled={cloning || !sourceConnected || !targetConnected}
             >
               {cloning ? '⏳ Cloning...' : '🚀 Clone Database'}
             </button>
           </div>
+
+          {showConfirmDialog && (
+            <ConfirmClone 
+              source={source}
+              target={target}
+              onConfirm={cloneDatabase}
+              onCancel={() => setShowConfirmDialog(false)}
+            />
+          )}
 
           <ProgressLog logs={logs} />
         </div>

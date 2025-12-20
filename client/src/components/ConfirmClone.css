@@ -1,0 +1,251 @@
+.confirm-clone-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+  animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.confirm-clone-dialog {
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  max-width: 700px;
+  width: 90%;
+  max-height: 90vh;
+  overflow-y: auto;
+  animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.dialog-header {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 25px;
+  border-radius: 16px 16px 0 0;
+  border-bottom: 2px solid #667eea;
+}
+
+.dialog-header h2 {
+  margin: 0 0 8px 0;
+  font-size: 1.5em;
+}
+
+.dialog-header p {
+  margin: 0;
+  opacity: 0.9;
+  font-size: 0.95em;
+}
+
+.dialog-content {
+  padding: 30px;
+}
+
+.clone-summary {
+  background: #f8f9fa;
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 25px;
+  border-left: 4px solid #667eea;
+}
+
+.summary-item {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 15px;
+}
+
+.summary-item:last-of-type {
+  margin-bottom: 0;
+}
+
+.summary-item .label {
+  font-weight: 600;
+  color: #667eea;
+  min-width: 80px;
+}
+
+.summary-item .value {
+  color: #333;
+  word-break: break-all;
+}
+
+.arrow-down {
+  text-align: center;
+  color: #667eea;
+  font-size: 1.5em;
+  margin: 10px 0;
+}
+
+.commands-section {
+  margin-top: 20px;
+}
+
+.commands-section h3 {
+  color: #333;
+  margin-bottom: 15px;
+  font-size: 1.1em;
+}
+
+.command-block {
+  background: #2d2d2d;
+  border-radius: 10px;
+  padding: 15px;
+  margin-bottom: 15px;
+  border-left: 4px solid #667eea;
+}
+
+.command-label {
+  color: #999;
+  font-size: 0.9em;
+  margin-bottom: 10px;
+  display: block;
+}
+
+.command-code {
+  color: #4ec9b0;
+  font-family: 'Courier New', monospace;
+  font-size: 0.85em;
+  margin: 0;
+  padding: 0;
+  line-height: 1.4;
+  overflow-x: auto;
+}
+
+.command-code::-webkit-scrollbar {
+  height: 6px;
+}
+
+.command-code::-webkit-scrollbar-track {
+  background: #3d3d3d;
+}
+
+.command-code::-webkit-scrollbar-thumb {
+  background: #667eea;
+  border-radius: 3px;
+}
+
+.security-note {
+  background: #e8f5e9;
+  border: 2px solid #4caf50;
+  border-radius: 10px;
+  padding: 15px;
+  margin-top: 20px;
+}
+
+.security-note strong {
+  color: #2e7d32;
+  display: block;
+  margin-bottom: 10px;
+}
+
+.security-note ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.security-note li {
+  color: #1b5e20;
+  margin-bottom: 6px;
+  font-size: 0.95em;
+}
+
+.security-note li:last-child {
+  margin-bottom: 0;
+}
+
+.dialog-footer {
+  display: flex;
+  gap: 12px;
+  padding: 20px 30px;
+  border-top: 1px solid #e9ecef;
+  background: #f8f9fa;
+  border-radius: 0 0 16px 16px;
+  justify-content: flex-end;
+}
+
+.btn-cancel,
+.btn-confirm {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.95em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-cancel {
+  background: #e9ecef;
+  color: #555;
+}
+
+.btn-cancel:hover {
+  background: #dee2e6;
+  transform: translateY(-2px);
+}
+
+.btn-confirm {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+}
+
+.btn-confirm:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+}
+
+.btn-confirm:active {
+  transform: translateY(0);
+}
+
+@media (max-width: 600px) {
+  .confirm-clone-dialog {
+    width: 95%;
+    max-height: 95vh;
+  }
+
+  .dialog-content {
+    padding: 20px;
+  }
+
+  .dialog-footer {
+    flex-direction: column-reverse;
+  }
+
+  .btn-cancel,
+  .btn-confirm {
+    width: 100%;
+  }
+
+  .command-code {
+    font-size: 0.8em;
+  }
+}
