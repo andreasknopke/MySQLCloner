@@ -3,6 +3,7 @@ import axios from 'axios';
 import './App.css';
 import CredentialForm from './components/CredentialForm';
 import ProgressLog from './components/ProgressLog';
+import DatabaseStats from './components/DatabaseStats';
 
 function App() {
   const [source, setSource] = useState({
@@ -26,6 +27,8 @@ function App() {
   const [sourceConnected, setSourceConnected] = useState(false);
   const [targetConnected, setTargetConnected] = useState(false);
   const [sourceDatabases, setSourceDatabases] = useState([]);
+  const [sourceStats, setSourceStats] = useState(null);
+  const [targetStats, setTargetStats] = useState(null);
 
   // Dynamically determine API URL based on environment
   const API_URL = process.env.REACT_APP_API_URL || 
@@ -42,9 +45,22 @@ function App() {
         if (dbResponse.data.success) {
           setSourceDatabases(dbResponse.data.databases);
         }
+
+        // Get source database stats if database is selected
+        if (source.database) {
+          try {
+            const statsResponse = await axios.post(`${API_URL}/get-database-stats`, { ...source, isSource: true });
+            if (statsResponse.data.success) {
+              setSourceStats(statsResponse.data.stats);
+            }
+          } catch (statsError) {
+            console.log('Could not fetch stats:', statsError.message);
+          }
+        }
       }
     } catch (error) {
       setSourceConnected(false);
+      setSourceStats(null);
       setLogs([...logs, { type: 'error', message: `Source error: ${error.response?.data?.message || error.message}` }]);
     }
   };
@@ -55,9 +71,22 @@ function App() {
       if (response.data.success) {
         setTargetConnected(true);
         setLogs([...logs, { type: 'success', message: 'Target connected!' }]);
+        
+        // Get target database stats if database is selected
+        if (target.database) {
+          try {
+            const statsResponse = await axios.post(`${API_URL}/get-database-stats`, { ...target, isSource: false });
+            if (statsResponse.data.success) {
+              setTargetStats(statsResponse.data.stats);
+            }
+          } catch (statsError) {
+            console.log('Could not fetch stats:', statsError.message);
+          }
+        }
       }
     } catch (error) {
       setTargetConnected(false);
+      setTargetStats(null);
       setLogs([...logs, { type: 'error', message: `Target error: ${error.response?.data?.message || error.message}` }]);
     }
   };
@@ -115,30 +144,36 @@ function App() {
 
         <div className="main-content">
           <div className="forms-section">
-            <CredentialForm
-              title="Source Database"
-              credentials={source}
-              setCredentials={setSource}
-              onTest={testSourceConnection}
-              connected={sourceConnected}
-              databases={sourceDatabases}
-              selectedDatabase={source.database}
-              onDatabaseSelect={(db) => setSource({ ...source, database: db })}
-            />
+            <div>
+              <CredentialForm
+                title="Source Database"
+                credentials={source}
+                setCredentials={setSource}
+                onTest={testSourceConnection}
+                connected={sourceConnected}
+                databases={sourceDatabases}
+                selectedDatabase={source.database}
+                onDatabaseSelect={(db) => setSource({ ...source, database: db })}
+              />
+              {sourceStats && <DatabaseStats stats={sourceStats} />}
+            </div>
 
             <div className="arrow">
               <span>→</span>
             </div>
 
-            <CredentialForm
-              title="Target Database"
-              credentials={target}
-              setCredentials={setTarget}
-              onTest={testTargetConnection}
-              connected={targetConnected}
-              selectedDatabase={target.database}
-              onDatabaseSelect={(db) => setTarget({ ...target, database: db })}
-            />
+            <div>
+              <CredentialForm
+                title="Target Database"
+                credentials={target}
+                setCredentials={setTarget}
+                onTest={testTargetConnection}
+                connected={targetConnected}
+                selectedDatabase={target.database}
+                onDatabaseSelect={(db) => setTarget({ ...target, database: db })}
+              />
+              {targetStats && <DatabaseStats stats={targetStats} />}
+            </div>
           </div>
 
           <div className="action-section">

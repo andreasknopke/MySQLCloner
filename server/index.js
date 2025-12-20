@@ -270,6 +270,83 @@ app.post('/api/get-databases', async (req, res) => {
   }
 });
 
+// Get database statistics endpoint
+app.post('/api/get-database-stats', async (req, res) => {
+  try {
+    const { host, user, password, database, port, isSource } = req.body;
+
+    const connection = await mysql.createConnection({
+      host,
+      user,
+      password,
+      database,
+      port: port || 3306,
+    });
+
+    // Set read-only if source
+    if (isSource) {
+      try {
+        await connection.execute('SET SESSION TRANSACTION READ ONLY');
+      } catch (error) {
+        await connection.end();
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Failed to set read-only mode' 
+        });
+      }
+    }
+
+    // Get table count
+    const [tableCount] = await connection.execute(
+      `SELECT COUNT(*) as count FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?`,
+      [database]
+    );
+
+    // Get table list with row counts
+    const [tables] = await connection.execute(`
+      SELECT 
+        TABLE_NAME,
+        TABLE_ROWS,
+        ROUND(((data_length + index_length) / 1024 / 1024), 2) as size_mb
+      FROM information_schema.TABLES 
+      WHERE TABLE_SCHEMA = ?
+      ORDER BY TABLE_ROWS DESC
+    `, [database]);
+
+    // Get database size
+    const [dbSize] = await connection.execute(`
+      SELECT 
+        ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) as size_mb
+      FROM information_schema.TABLES 
+      WHERE TABLE_SCHEMA = ?
+    `, [database]);
+
+    // Get total row count
+    const [totalRows] = await connection.execute(`
+      SELECT SUM(TABLE_ROWS) as total_rows
+      FROM information_schema.TABLES 
+      WHERE TABLE_SCHEMA = ?
+    `, [database]);
+
+    await connection.end();
+
+    res.json({ 
+      success: true, 
+      stats: {
+        tableCount: tableCount[0]?.count || 0,
+        totalRows: totalRows[0]?.total_rows || 0,
+        sizeInMB: dbSize[0]?.size_mb || 0,
+        tables: tables || []
+      }
+    });
+  } catch (error) {
+    res.status(400).json({ 
+      success: false, 
+      message: error.message 
+    });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
