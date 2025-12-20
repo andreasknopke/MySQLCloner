@@ -17,13 +17,13 @@ WORKDIR /app
 
 # Install MySQL 8.0 client from Oracle's official repository
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends wget gnupg ca-certificates && \
+    apt-get install -y --no-install-recommends wget gnupg ca-certificates lsb-release && \
     wget --no-check-certificate https://dev.mysql.com/get/mysql-apt-config_0.8.29-1_all.deb && \
     DEBIAN_FRONTEND=noninteractive dpkg -i mysql-apt-config_0.8.29-1_all.deb && \
     apt-get update && \
     apt-get install -y --no-install-recommends mysql-client && \
     rm -f mysql-apt-config_0.8.29-1_all.deb && \
-    apt-get remove -y wget gnupg && \
+    apt-get remove -y wget gnupg lsb-release && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
