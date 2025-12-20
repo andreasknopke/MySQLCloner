@@ -29,7 +29,5 @@ RUN npm install --omit=dev
 
 EXPOSE 5000
 
-# Use node user for security
-USER node
-
+# Keep as root for file operations - Railway will handle security
 CMD ["node", "index.js"]
