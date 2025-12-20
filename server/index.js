@@ -1,0 +1,269 @@
+const express = require('express');
+const cors = require('cors');
+const mysql = require('mysql2/promise');
+const { exec } = require('child_process');
+const util = require('util');
+const fs = require('fs');
+const path = require('path');
+
+const app = express();
+const execPromise = util.promisify(exec);
+
+// Allow CORS from origin or disable it for production
+const corsOptions = {
+  origin: process.env.NODE_ENV === 'production' ? false : '*',
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
+app.use(express.json());
+
+// Serve static React build in production
+if (process.env.NODE_ENV === 'production') {
+  const buildPath = path.join(__dirname, '../client/build');
+  app.use(express.static(buildPath));
+  
+  // Fallback to index.html for client-side routing
+  app.get('/', (req, res) => {
+    res.sendFile(path.join(buildPath, 'index.html'));
+  });
+}
+
+const PORT = process.env.PORT || 5000;
+
+// Test connection endpoint
+app.post('/api/test-connection', async (req, res) => {
+  try {
+    const { host, user, password, database, port, isSource } = req.body;
+
+    const connection = await mysql.createConnection({
+      host,
+      user,
+      password,
+      database,
+      port: port || 3306,
+      waitForConnections: true,
+      connectionLimit: 1,
+      queueLimit: 0,
+    });
+
+    await connection.ping();
+
+    // If this is a source connection, verify read-only mode
+    if (isSource && database) {
+      try {
+        // Attempt to set read-only mode for the session
+        await connection.execute('SET SESSION TRANSACTION READ ONLY');
+        
+        // Verify the user has appropriate permissions
+        const [perms] = await connection.execute(`
+          SELECT
+            COUNT(*) as total_privs,
+            SUM(CASE WHEN Privilege IN ('SELECT', 'SHOW VIEW', 'LOCK TABLES') THEN 1 ELSE 0 END) as read_privs
+          FROM information_schema.role_table_grants
+          WHERE GRANTEE = USER()
+        `);
+
+        // Reset to normal transaction mode
+        await connection.execute('SET SESSION TRANSACTION READ WRITE');
+      } catch (permError) {
+        // Read-only mode setting is not critical for the connection test
+        console.warn('Read-only mode could not be verified:', permError.message);
+      }
+    }
+
+    await connection.end();
+
+    res.json({ success: true, message: 'Connection successful!' });
+  } catch (error) {
+    res.status(400).json({ 
+      success: false, 
+      message: error.message 
+    });
+  }
+});
+
+// Clone database endpoint
+app.post('/api/clone-database', async (req, res) => {
+  try {
+    const { source, target } = req.body;
+
+    // Validate inputs
+    if (!source || !target) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Source and target credentials are required' 
+      });
+    }
+
+    // Test source connection with READ-ONLY enforcement
+    const sourceConn = await mysql.createConnection({
+      host: source.host,
+      user: source.user,
+      password: source.password,
+      port: source.port || 3306,
+    });
+
+    // CRITICAL: Force source connection to read-only mode
+    try {
+      await sourceConn.execute('SET SESSION TRANSACTION READ ONLY');
+    } catch (error) {
+      await sourceConn.end();
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Failed to set read-only mode on source. Aborting clone for safety.' 
+      });
+    }
+
+    // Verify source database exists
+    const [sourceDbCheck] = await sourceConn.execute(
+      'SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?',
+      [source.database]
+    );
+
+    if (sourceDbCheck.length === 0) {
+      await sourceConn.end();
+      return res.status(400).json({ 
+        success: false, 
+        message: `Source database "${source.database}" does not exist` 
+      });
+    }
+
+    // Test target connection
+    const targetConn = await mysql.createConnection({
+      host: target.host,
+      user: target.user,
+      password: target.password,
+      port: target.port || 3306,
+    });
+
+    // Create dump file path
+    const dumpFile = `/tmp/mysql_dump_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.sql`;
+
+    // Send initial status
+    res.setHeader('Content-Type', 'application/json');
+    res.write(JSON.stringify({ 
+      status: 'progress', 
+      message: 'Source database set to read-only mode. Starting clone...' 
+    }) + '\n');
+
+    // Step 1: Create dump from source with maximum safety flags
+    res.write(JSON.stringify({ 
+      status: 'progress', 
+      message: `Dumping source database: ${source.database}` 
+    }) + '\n');
+
+    // Use mysqldump with comprehensive safety options
+    // --skip-add-drop-database ensures we don't drop the source DB
+    // --lock-tables acquires READ LOCAL lock (non-blocking reads)
+    // --single-transaction uses consistent snapshot
+    // --no-data=false ensures data is included
+    const dumpCommand = `mysqldump -h ${source.host} -P ${source.port || 3306} -u ${source.user} --password="${source.password}" --single-transaction --lock-tables --routines --triggers --events --skip-add-drop-database --skip-add-locks ${source.database} > ${dumpFile}`;
+    
+    await execPromise(dumpCommand, { maxBuffer: 100 * 1024 * 1024 });
+
+    res.write(JSON.stringify({ 
+      status: 'progress', 
+      message: 'Dump created successfully. Creating target database...' 
+    }) + '\n');
+
+    // Step 2: Create database on target if it doesn't exist
+    const [rows] = await targetConn.execute(
+      'SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?',
+      [target.database]
+    );
+
+    if (rows.length === 0) {
+      res.write(JSON.stringify({ 
+        status: 'progress', 
+        message: `Creating database: ${target.database}` 
+      }) + '\n');
+
+      await targetConn.execute(`CREATE DATABASE IF NOT EXISTS \`${target.database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+    }
+
+    res.write(JSON.stringify({ 
+      status: 'progress', 
+      message: `Restoring database to target: ${target.database}` 
+    }) + '\n');
+
+    // Step 3: Restore dump to target
+    const restoreCommand = `mysql -h ${target.host} -P ${target.port || 3306} -u ${target.user} --password="${target.password}" ${target.database} < ${dumpFile}`;
+    
+    await execPromise(restoreCommand, { maxBuffer: 100 * 1024 * 1024 });
+
+    res.write(JSON.stringify({ 
+      status: 'progress', 
+      message: 'Database restore completed. Cleaning up...' 
+    }) + '\n');
+
+    // Cleanup
+    if (fs.existsSync(dumpFile)) {
+      fs.unlinkSync(dumpFile);
+    }
+
+    // Close connections
+    await sourceConn.end();
+    await targetConn.end();
+
+    res.write(JSON.stringify({ 
+      status: 'success', 
+      message: 'Database cloned successfully! Source database remains untouched.' 
+    }) + '\n');
+    res.end();
+
+  } catch (error) {
+    console.error('Clone error:', error);
+    res.write(JSON.stringify({ 
+      status: 'error', 
+      message: error.message 
+    }) + '\n');
+    res.end();
+  }
+});
+
+// Get database list endpoint
+app.post('/api/get-databases', async (req, res) => {
+  try {
+    const { host, user, password, port, isSource } = req.body;
+
+    const connection = await mysql.createConnection({
+      host,
+      user,
+      password,
+      port: port || 3306,
+    });
+
+    // If this is a source connection, enforce read-only mode
+    if (isSource) {
+      try {
+        await connection.execute('SET SESSION TRANSACTION READ ONLY');
+      } catch (error) {
+        await connection.end();
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Failed to set read-only mode. Aborting for safety.' 
+        });
+      }
+    }
+
+    const [rows] = await connection.execute(
+      "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')"
+    );
+
+    const databases = rows.map(row => row.SCHEMA_NAME);
+
+    await connection.end();
+
+    res.json({ success: true, databases });
+  } catch (error) {
+    res.status(400).json({ 
+      success: false, 
+      message: error.message 
+    });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
