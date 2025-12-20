@@ -4,6 +4,10 @@ import './DatabaseStats.css';
 function DatabaseStats({ stats }) {
   if (!stats) return null;
 
+  // Ensure sizeInMB is a number
+  const totalSize = parseFloat(stats.sizeInMB) || 0;
+  const totalRows = parseInt(stats.totalRows) || 0;
+
   return (
     <div className="database-stats">
       <h3>📊 Datenbankstatistiken</h3>
@@ -15,11 +19,11 @@ function DatabaseStats({ stats }) {
         </div>
         <div className="stat-item">
           <div className="stat-label">Gesamte Datensätze</div>
-          <div className="stat-value">{(stats.totalRows || 0).toLocaleString()}</div>
+          <div className="stat-value">{totalRows.toLocaleString()}</div>
         </div>
         <div className="stat-item">
           <div className="stat-label">Größe</div>
-          <div className="stat-value">{stats.sizeInMB.toFixed(2)} MB</div>
+          <div className="stat-value">{totalSize.toFixed(2)} MB</div>
         </div>
       </div>
 
@@ -27,19 +31,23 @@ function DatabaseStats({ stats }) {
         <div className="tables-list">
           <h4>📋 Tabellen</h4>
           <div className="tables-grid">
-            {stats.tables.map((table) => (
-              <div key={table.TABLE_NAME} className="table-card">
-                <div className="table-name">{table.TABLE_NAME}</div>
-                <div className="table-info">
-                  <span className="info-badge">
-                    {(table.TABLE_ROWS || 0).toLocaleString()} Zeilen
-                  </span>
-                  <span className="info-badge size">
-                    {table.size_mb || 0} MB
-                  </span>
+            {stats.tables.map((table) => {
+              const tableSize = parseFloat(table.size_mb) || 0;
+              const tableRows = parseInt(table.TABLE_ROWS) || 0;
+              return (
+                <div key={table.TABLE_NAME} className="table-card">
+                  <div className="table-name">{table.TABLE_NAME}</div>
+                  <div className="table-info">
+                    <span className="info-badge">
+                      {tableRows.toLocaleString()} Zeilen
+                    </span>
+                    <span className="info-badge size">
+                      {tableSize.toFixed(2)} MB
+                    </span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
