@@ -14,14 +14,20 @@ const execPromise = util.promisify(exec);
 const scheduledJobs = new Map();
 const jobHistory = [];
 
-// Persistent logging system
-const LOGS_DIR = path.join(__dirname, 'logs');
-const JOBS_FILE = path.join(__dirname, 'scheduled-jobs.json');
+// Persistent logging system - use persistent storage in production
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const LOGS_DIR = path.join(DATA_DIR, 'logs');
+const JOBS_FILE = path.join(DATA_DIR, 'scheduled-jobs.json');
 const LOGS_FILE = path.join(LOGS_DIR, 'cron-logs.json');
 
-// Ensure logs directory exists
+// Ensure data directories exist
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  console.log(`Created data directory: ${DATA_DIR}`);
+}
 if (!fs.existsSync(LOGS_DIR)) {
   fs.mkdirSync(LOGS_DIR, { recursive: true });
+  console.log(`Created logs directory: ${LOGS_DIR}`);
 }
 
 // Log entry structure: { id, jobId, jobName, timestamp, level, message, metadata }
