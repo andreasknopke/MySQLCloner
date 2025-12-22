@@ -579,30 +579,44 @@ app.post('/api/get-database-stats', async (req, res) => {
       }
     }
 
-    // Get table list first
+    // Get base tables and views
     const [tableList] = await connection.execute(
-      `SELECT TABLE_NAME, ROUND(((data_length + index_length) / 1024 / 1024), 2) as size_mb
+      `SELECT TABLE_NAME, TABLE_TYPE, ROUND(((data_length + index_length) / 1024 / 1024), 2) as size_mb
        FROM information_schema.TABLES 
-       WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'
-       ORDER BY TABLE_NAME`,
+       WHERE TABLE_SCHEMA = ? AND TABLE_TYPE IN ('BASE TABLE', 'VIEW')
+       ORDER BY TABLE_TYPE, TABLE_NAME`,
       [database]
     );
 
-    // Get EXACT row counts using COUNT(*) for each table
+    // Get EXACT row counts using COUNT(*) for each table/view
     const tables = [];
     let totalRows = 0;
+    let baseTableCount = 0;
+    let viewCount = 0;
     
     for (const table of tableList) {
-      const [countResult] = await connection.execute(
-        `SELECT COUNT(*) as cnt FROM \`${table.TABLE_NAME}\``
-      );
-      const rowCount = parseInt(countResult[0].cnt);
-      tables.push({
-        TABLE_NAME: table.TABLE_NAME,
-        TABLE_ROWS: rowCount,
-        size_mb: table.size_mb
-      });
-      totalRows += rowCount;
+      try {
+        const [countResult] = await connection.execute(
+          `SELECT COUNT(*) as cnt FROM \`${table.TABLE_NAME}\``
+        );
+        const rowCount = parseInt(countResult[0].cnt);
+        tables.push({
+          TABLE_NAME: table.TABLE_NAME,
+          TABLE_TYPE: table.TABLE_TYPE,
+          TABLE_ROWS: rowCount,
+          size_mb: table.size_mb
+        });
+        totalRows += rowCount;
+        
+        if (table.TABLE_TYPE === 'BASE TABLE') {
+          baseTableCount++;
+        } else {
+          viewCount++;
+        }
+      } catch (error) {
+        // Some views might not be countable, skip them
+        console.log(`Could not count rows for ${table.TABLE_NAME}:`, error.message);
+      }
     }
     
     // Sort by row count descending
@@ -621,7 +635,9 @@ app.post('/api/get-database-stats', async (req, res) => {
     res.json({ 
       success: true, 
       stats: {
-        tableCount: tableList.length,
+        tableCount: baseTableCount,
+        viewCount: viewCount,
+        totalCount: tableList.length,
         totalRows: totalRows,
         sizeInMB: dbSize[0]?.size_mb || 0,
         tables: tables

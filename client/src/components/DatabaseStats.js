@@ -22,8 +22,20 @@ function DatabaseStats({ stats, onRefresh }) {
       <div className="stats-overview">
         <div className="stat-item">
           <div className="stat-label">Tabellen</div>
-          <div className="stat-value">{stats.tableCount}</div>
+          <div className="stat-value">{stats.tableCount || 0}</div>
         </div>
+        {stats.viewCount > 0 && (
+          <div className="stat-item">
+            <div className="stat-label">Views</div>
+            <div className="stat-value">{stats.viewCount}</div>
+          </div>
+        )}
+        {stats.totalCount && (
+          <div className="stat-item">
+            <div className="stat-label">Gesamt</div>
+            <div className="stat-value">{stats.totalCount}</div>
+          </div>
+        )}
         <div className="stat-item">
           <div className="stat-label">Gesamte Datensätze</div>
           <div className="stat-value">{totalRows.toLocaleString()}</div>
@@ -36,21 +48,26 @@ function DatabaseStats({ stats, onRefresh }) {
 
       {stats.tables && stats.tables.length > 0 && (
         <div className="tables-list">
-          <h4>📋 Tabellen</h4>
+          <h4>📋 Tabellen & Views</h4>
           <div className="tables-grid">
             {stats.tables.map((table) => {
               const tableSize = parseFloat(table.size_mb) || 0;
               const tableRows = parseInt(table.TABLE_ROWS) || 0;
               return (
                 <div key={table.TABLE_NAME} className="table-card">
-                  <div className="table-name">{table.TABLE_NAME}</div>
+                  <div className="table-name">
+                    {table.TABLE_TYPE === 'VIEW' && '👁️ '}
+                    {table.TABLE_NAME}
+                  </div>
                   <div className="table-info">
                     <span className="info-badge">
                       {tableRows.toLocaleString()} Zeilen
                     </span>
-                    <span className="info-badge size">
-                      {tableSize.toFixed(2)} MB
-                    </span>
+                    {tableSize > 0 && (
+                      <span className="info-badge size">
+                        {tableSize.toFixed(2)} MB
+                      </span>
+                    )}
                   </div>
                 </div>
               );
