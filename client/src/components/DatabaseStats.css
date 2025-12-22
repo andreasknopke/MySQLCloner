@@ -18,10 +18,41 @@
   }
 }
 
+.stats-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
 .database-stats h3 {
   color: #667eea;
-  margin-bottom: 15px;
+  margin: 0;
   font-size: 1.1em;
+}
+
+.btn-refresh-stats {
+  background: #667eea;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.3s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-refresh-stats:hover {
+  background: #5568d3;
+  transform: rotate(180deg);
+}
+
+.btn-refresh-stats:active {
+  transform: rotate(180deg) scale(0.95);
 }
 
 .stats-overview {

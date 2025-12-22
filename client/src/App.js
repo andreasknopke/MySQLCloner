@@ -43,6 +43,34 @@ function App() {
   const API_URL = process.env.REACT_APP_API_URL || 
     (process.env.NODE_ENV === 'production' ? '/api' : 'http://localhost:5000/api');
 
+  const refreshSourceStats = async () => {
+    if (!source.database || !sourceConnected) return;
+    
+    try {
+      const statsResponse = await axios.post(`${API_URL}/get-database-stats`, { ...source, isSource: true });
+      if (statsResponse.data.success) {
+        setSourceStats(statsResponse.data.stats);
+        setLogs([...logs, { type: 'success', message: 'Source stats updated!' }]);
+      }
+    } catch (error) {
+      setLogs([...logs, { type: 'error', message: `Failed to refresh stats: ${error.message}` }]);
+    }
+  };
+
+  const refreshTargetStats = async () => {
+    if (!target.database || !targetConnected) return;
+    
+    try {
+      const statsResponse = await axios.post(`${API_URL}/get-database-stats`, { ...target, isSource: false });
+      if (statsResponse.data.success) {
+        setTargetStats(statsResponse.data.stats);
+        setLogs([...logs, { type: 'success', message: 'Target stats updated!' }]);
+      }
+    } catch (error) {
+      setLogs([...logs, { type: 'error', message: `Failed to refresh stats: ${error.message}` }]);
+    }
+  };
+
   const testSourceConnection = async () => {
     try {
       const response = await axios.post(`${API_URL}/test-connection`, { ...source, isSource: true });
@@ -263,7 +291,7 @@ function App() {
                   selectedDatabase={source.database}
                   onDatabaseSelect={(db) => setSource({ ...source, database: db })}
                 />
-                {sourceStats && <DatabaseStats stats={sourceStats} />}
+                {sourceStats && <DatabaseStats stats={sourceStats} onRefresh={refreshSourceStats} />}
               </div>
 
               <div className="arrow">
@@ -280,7 +308,7 @@ function App() {
                   selectedDatabase={target.database}
                   onDatabaseSelect={(db) => setTarget({ ...target, database: db })}
                 />
-                {targetStats && <DatabaseStats stats={targetStats} />}
+                {targetStats && <DatabaseStats stats={targetStats} onRefresh={refreshTargetStats} />}
               </div>
             </div>
 
