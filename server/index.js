@@ -14,8 +14,66 @@ const execPromise = util.promisify(exec);
 const scheduledJobs = new Map();
 const jobHistory = [];
 
-// Load saved jobs from file on startup
+// Persistent logging system
+const LOGS_DIR = path.join(__dirname, 'logs');
 const JOBS_FILE = path.join(__dirname, 'scheduled-jobs.json');
+const LOGS_FILE = path.join(LOGS_DIR, 'cron-logs.json');
+
+// Ensure logs directory exists
+if (!fs.existsSync(LOGS_DIR)) {
+  fs.mkdirSync(LOGS_DIR, { recursive: true });
+}
+
+// Log entry structure: { id, jobId, jobName, timestamp, level, message, metadata }
+const cronLogs = [];
+
+// Load saved logs from file on startup
+const loadSavedLogs = () => {
+  try {
+    if (fs.existsSync(LOGS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(LOGS_FILE, 'utf8'));
+      return data.logs || [];
+    }
+  } catch (error) {
+    console.error('Failed to load saved logs:', error.message);
+  }
+  return [];
+};
+
+// Save logs to file (keep last 1000 entries)
+const saveLogsToFile = () => {
+  try {
+    const logsToSave = cronLogs.slice(-1000);
+    fs.writeFileSync(LOGS_FILE, JSON.stringify({ logs: logsToSave }, null, 2));
+  } catch (error) {
+    console.error('Failed to save logs:', error.message);
+  }
+};
+
+// Add a log entry
+const addLog = (jobId, jobName, level, message, metadata = {}) => {
+  const logEntry = {
+    id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    jobId,
+    jobName,
+    timestamp: new Date().toISOString(),
+    level, // 'info', 'success', 'warning', 'error'
+    message,
+    metadata
+  };
+  
+  cronLogs.push(logEntry);
+  console.log(`[${level.toUpperCase()}] [${jobName}] ${message}`);
+  
+  // Save periodically (every 10 logs) or on error
+  if (cronLogs.length % 10 === 0 || level === 'error') {
+    saveLogsToFile();
+  }
+  
+  return logEntry;
+};
+
+// Load saved jobs from file on startup
 const loadSavedJobs = () => {
   try {
     if (fs.existsSync(JOBS_FILE)) {
@@ -580,14 +638,20 @@ app.post('/api/get-database-stats', async (req, res) => {
 // ============== CRON JOB MANAGEMENT ==============
 
 // Helper function to perform the actual clone (reusable for cron jobs)
-async function performClone(source, target, logCallback) {
+async function performClone(source, target, logCallback, jobId = null, jobName = null) {
   let sourceConn = null;
   let targetConn = null;
   
   const log = logCallback || console.log;
+  const logWithPersist = (level, message, metadata = {}) => {
+    log(message);
+    if (jobId && jobName) {
+      addLog(jobId, jobName, level, message, metadata);
+    }
+  };
 
   try {
-    log('Connecting to source database...');
+    logWithPersist('info', 'Connecting to source database...');
     
     sourceConn = await mysql.createConnection({
       host: source.host,
@@ -599,9 +663,9 @@ async function performClone(source, target, logCallback) {
     });
 
     await sourceConn.execute('SET SESSION TRANSACTION READ ONLY');
-    log('Source database connected (READ-ONLY mode enforced)');
+    logWithPersist('success', 'Source database connected (READ-ONLY mode enforced)');
 
-    log('Connecting to target database...');
+    logWithPersist('info', 'Connecting to target database...');
     
     targetConn = await mysql.createConnection({
       host: target.host,
@@ -611,14 +675,14 @@ async function performClone(source, target, logCallback) {
       multipleStatements: true,
     });
 
-    log(`Creating target database: ${target.database}`);
+    logWithPersist('info', `Creating target database: ${target.database}`);
     await targetConn.execute(`CREATE DATABASE IF NOT EXISTS \`${target.database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
     await targetConn.changeUser({ database: target.database });
     await targetConn.execute("SET SESSION sql_mode = 'NO_ENGINE_SUBSTITUTION'");
     await targetConn.execute('SET FOREIGN_KEY_CHECKS = 0');
 
     // Drop all existing tables
-    log('Cleaning target database...');
+    logWithPersist('info', 'Cleaning target database...');
     const [existingViews] = await targetConn.execute(
       `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_SCHEMA = ?`,
       [target.database]
@@ -635,18 +699,20 @@ async function performClone(source, target, logCallback) {
       await targetConn.execute(`DROP TABLE IF EXISTS \`${table.TABLE_NAME}\``);
     }
 
+    logWithPersist('info', `Cleaned ${existingTables.length} tables, ${existingViews.length} views`);
+
     // Get all tables from source
     const [tables] = await sourceConn.execute(
       `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'`,
       [source.database]
     );
 
-    log(`Found ${tables.length} tables to clone`);
+    logWithPersist('info', `Found ${tables.length} tables to clone`);
 
     // Clone each table
     for (let i = 0; i < tables.length; i++) {
       const tableName = tables[i].TABLE_NAME;
-      log(`Cloning table ${i + 1}/${tables.length}: ${tableName}`);
+      logWithPersist('info', `Cloning table ${i + 1}/${tables.length}: ${tableName}`);
 
       const [createResult] = await sourceConn.execute(`SHOW CREATE TABLE \`${tableName}\``);
       const createStatement = createResult[0]['Create Table'];
@@ -698,15 +764,15 @@ async function performClone(source, target, logCallback) {
         if (rows.length < batchSize) break;
       }
 
-      log(`  ✓ ${tableName}: ${totalCopied} rows copied`);
+      logWithPersist('success', `✓ ${tableName}: ${totalCopied} rows copied`, { table: tableName, rows: totalCopied });
     }
 
     await targetConn.execute('SET FOREIGN_KEY_CHECKS = 1');
-    log(`Clone completed successfully! ${tables.length} tables copied.`);
+    logWithPersist('success', `Clone completed successfully! ${tables.length} tables copied.`, { tablesCloned: tables.length });
     
     return { success: true, tablesCloned: tables.length };
   } catch (error) {
-    log(`Clone failed: ${error.message}`);
+    logWithPersist('error', `Clone failed: ${error.message}`, { error: error.message, stack: error.stack });
     return { success: false, error: error.message };
   } finally {
     if (sourceConn) await sourceConn.end().catch(() => {});
@@ -730,15 +796,27 @@ function scheduleJob(jobConfig) {
   
   // Create the cron task
   const task = cron.schedule(schedule, async () => {
-    console.log(`[CRON] Running scheduled job: ${name}`);
     const startTime = new Date();
+    addLog(id, name, 'info', `Cron job triggered: ${schedule}`);
     
     const result = await performClone(source, target, (msg) => {
       console.log(`[CRON ${name}] ${msg}`);
-    });
+    }, id, name);
     
     const endTime = new Date();
     const duration = (endTime - startTime) / 1000;
+    
+    if (result.success) {
+      addLog(id, name, 'success', `Job completed in ${duration.toFixed(1)}s`, { 
+        duration: `${duration.toFixed(1)}s`,
+        tablesCloned: result.tablesCloned 
+      });
+    } else {
+      addLog(id, name, 'error', `Job failed: ${result.error}`, { 
+        duration: `${duration.toFixed(1)}s`,
+        error: result.error 
+      });
+    }
     
     jobHistory.push({
       jobId: id,
@@ -754,6 +832,8 @@ function scheduleJob(jobConfig) {
     if (jobHistory.length > 100) {
       jobHistory.shift();
     }
+    
+    saveLogsToFile();
   }, {
     scheduled: enabled !== false
   });
@@ -868,11 +948,123 @@ app.post('/api/cron-jobs/:id/run', async (req, res) => {
   res.json({ success: true, message: 'Job started' });
   
   // Run asynchronously
-  performClone(job.source, job.target, console.log);
+  const startTime = new Date();
+  addLog(id, job.name, 'info', 'Manual job execution triggered');
+  
+  performClone(job.source, job.target, console.log, id, job.name).then(result => {
+    const endTime = new Date();
+    const duration = (endTime - startTime) / 1000;
+    
+    if (result.success) {
+      addLog(id, job.name, 'success', `Manual execution completed in ${duration.toFixed(1)}s`, { 
+        duration: `${duration.toFixed(1)}s`,
+        tablesCloned: result.tablesCloned 
+      });
+    } else {
+      addLog(id, job.name, 'error', `Manual execution failed: ${result.error}`, { 
+        duration: `${duration.toFixed(1)}s`,
+        error: result.error 
+      });
+    }
+    
+    saveLogsToFile();
+  });
+});
+
+// API: Get logs with optional filtering
+app.get('/api/logs', (req, res) => {
+  const { jobId, level, limit = 100, offset = 0 } = req.query;
+  
+  let filteredLogs = [...cronLogs];
+  
+  // Filter by jobId
+  if (jobId && jobId !== 'all') {
+    filteredLogs = filteredLogs.filter(log => log.jobId === jobId);
+  }
+  
+  // Filter by level
+  if (level && level !== 'all') {
+    filteredLogs = filteredLogs.filter(log => log.level === level);
+  }
+  
+  // Sort by timestamp descending (newest first)
+  filteredLogs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  
+  // Pagination
+  const total = filteredLogs.length;
+  const paginatedLogs = filteredLogs.slice(parseInt(offset), parseInt(offset) + parseInt(limit));
+  
+  res.json({ 
+    success: true, 
+    logs: paginatedLogs,
+    total,
+    offset: parseInt(offset),
+    limit: parseInt(limit)
+  });
+});
+
+// API: Clear all logs (with optional filtering)
+app.delete('/api/logs', (req, res) => {
+  const { jobId } = req.query;
+  
+  if (jobId && jobId !== 'all') {
+    const beforeCount = cronLogs.length;
+    const index = cronLogs.length;
+    for (let i = index - 1; i >= 0; i--) {
+      if (cronLogs[i].jobId === jobId) {
+        cronLogs.splice(i, 1);
+      }
+    }
+    const deletedCount = beforeCount - cronLogs.length;
+    saveLogsToFile();
+    return res.json({ success: true, message: `Deleted ${deletedCount} logs for job ${jobId}` });
+  }
+  
+  // Clear all logs
+  const count = cronLogs.length;
+  cronLogs.length = 0;
+  saveLogsToFile();
+  res.json({ success: true, message: `Deleted all ${count} logs` });
+});
+
+// API: Get log statistics
+app.get('/api/logs/stats', (req, res) => {
+  const stats = {
+    total: cronLogs.length,
+    byLevel: {
+      info: cronLogs.filter(l => l.level === 'info').length,
+      success: cronLogs.filter(l => l.level === 'success').length,
+      warning: cronLogs.filter(l => l.level === 'warning').length,
+      error: cronLogs.filter(l => l.level === 'error').length
+    },
+    byJob: {}
+  };
+  
+  // Count logs per job
+  cronLogs.forEach(log => {
+    if (!stats.byJob[log.jobId]) {
+      stats.byJob[log.jobId] = {
+        jobName: log.jobName,
+        count: 0,
+        lastActivity: log.timestamp
+      };
+    }
+    stats.byJob[log.jobId].count++;
+    if (new Date(log.timestamp) > new Date(stats.byJob[log.jobId].lastActivity)) {
+      stats.byJob[log.jobId].lastActivity = log.timestamp;
+    }
+  });
+  
+  res.json({ success: true, stats });
 });
 
 // Restore saved jobs on startup
 const initializeJobs = () => {
+  // Load saved logs first
+  const savedLogs = loadSavedLogs();
+  cronLogs.push(...savedLogs);
+  console.log(`Loaded ${savedLogs.length} saved log entries`);
+  
   const savedJobs = loadSavedJobs();
   console.log(`Loading ${savedJobs.length} saved cron jobs...`);
   
@@ -880,10 +1072,13 @@ const initializeJobs = () => {
     try {
       scheduleJob(job);
       console.log(`  ✓ Restored job: ${job.name} (${job.schedule})`);
+      addLog(job.id, job.name, 'info', `Job restored on server startup`);
     } catch (error) {
       console.error(`  ✗ Failed to restore job ${job.name}: ${error.message}`);
     }
   }
+  
+  saveLogsToFile();
 };
 
 app.listen(PORT, () => {

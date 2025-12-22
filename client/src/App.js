@@ -6,8 +6,11 @@ import ProgressLog from './components/ProgressLog';
 import DatabaseStats from './components/DatabaseStats';
 import ConfirmClone from './components/ConfirmClone';
 import CronDialog from './components/CronDialog';
+import CronManager from './components/CronManager';
+import LogViewer from './components/LogViewer';
 
 function App() {
+  const [activeTab, setActiveTab] = useState('clone'); // 'clone', 'jobs', 'logs'
   const [source, setSource] = useState({
     host: '',
     port: 3306,
@@ -225,94 +228,125 @@ function App() {
           <p>Clone your MySQL databases across networks</p>
         </div>
 
-        <div className="main-content">
-          <div className="forms-section">
-            <div>
-              <CredentialForm
-                title="Source Database"
-                credentials={source}
-                setCredentials={setSource}
-                onTest={testSourceConnection}
-                connected={sourceConnected}
-                databases={sourceDatabases}
-                selectedDatabase={source.database}
-                onDatabaseSelect={(db) => setSource({ ...source, database: db })}
-              />
-              {sourceStats && <DatabaseStats stats={sourceStats} />}
-            </div>
-
-            <div className="arrow">
-              <span>→</span>
-            </div>
-
-            <div>
-              <CredentialForm
-                title="Target Database"
-                credentials={target}
-                setCredentials={setTarget}
-                onTest={testTargetConnection}
-                connected={targetConnected}
-                selectedDatabase={target.database}
-                onDatabaseSelect={(db) => setTarget({ ...target, database: db })}
-              />
-              {targetStats && <DatabaseStats stats={targetStats} />}
-            </div>
-          </div>
-
-          <div className="action-section">
-            <button 
-              className={`clone-btn ${cloning ? 'loading' : ''} ${sourceConnected && targetConnected ? '' : 'disabled'}`}
-              onClick={handleInitiateClone}
-              disabled={cloning || !sourceConnected || !targetConnected}
-            >
-              {cloning ? '⏳ Cloning...' : '🚀 Clone Database'}
-            </button>
-          </div>
-
-          {showConfirmDialog && (
-            <ConfirmClone 
-              source={source}
-              target={target}
-              onConfirm={cloneDatabase}
-              onCancel={() => setShowConfirmDialog(false)}
-            />
-          )}
-
-          {cloneSuccess && !showCronDialog && (
-            <div className="success-actions">
-              <div className="success-message">
-                ✅ Clone completed successfully!
-              </div>
-              <button 
-                className="schedule-btn"
-                onClick={() => setShowCronDialog(true)}
-              >
-                ⏰ Schedule Auto-Clone
-              </button>
-              <button 
-                className="dismiss-btn"
-                onClick={() => setCloneSuccess(false)}
-              >
-                Dismiss
-              </button>
-            </div>
-          )}
-
-          {showCronDialog && (
-            <CronDialog
-              source={source}
-              target={target}
-              existingJobs={existingJobs}
-              onClose={() => {
-                setShowCronDialog(false);
-                setCloneSuccess(false);
-              }}
-              onSave={saveCronJob}
-            />
-          )}
-
-          <ProgressLog logs={logs} />
+        <div className="tabs">
+          <button 
+            className={`tab ${activeTab === 'clone' ? 'active' : ''}`}
+            onClick={() => setActiveTab('clone')}
+          >
+            🚀 Clone Database
+          </button>
+          <button 
+            className={`tab ${activeTab === 'jobs' ? 'active' : ''}`}
+            onClick={() => setActiveTab('jobs')}
+          >
+            ⏰ Cron Jobs
+          </button>
+          <button 
+            className={`tab ${activeTab === 'logs' ? 'active' : ''}`}
+            onClick={() => setActiveTab('logs')}
+          >
+            📋 Logs
+          </button>
         </div>
+
+        {activeTab === 'clone' && (
+          <div className="main-content">
+            <div className="forms-section">
+              <div>
+                <CredentialForm
+                  title="Source Database"
+                  credentials={source}
+                  setCredentials={setSource}
+                  onTest={testSourceConnection}
+                  connected={sourceConnected}
+                  databases={sourceDatabases}
+                  selectedDatabase={source.database}
+                  onDatabaseSelect={(db) => setSource({ ...source, database: db })}
+                />
+                {sourceStats && <DatabaseStats stats={sourceStats} />}
+              </div>
+
+              <div className="arrow">
+                <span>→</span>
+              </div>
+
+              <div>
+                <CredentialForm
+                  title="Target Database"
+                  credentials={target}
+                  setCredentials={setTarget}
+                  onTest={testTargetConnection}
+                  connected={targetConnected}
+                  selectedDatabase={target.database}
+                  onDatabaseSelect={(db) => setTarget({ ...target, database: db })}
+                />
+                {targetStats && <DatabaseStats stats={targetStats} />}
+              </div>
+            </div>
+
+            <div className="action-section">
+              <button 
+                className={`clone-btn ${cloning ? 'loading' : ''} ${sourceConnected && targetConnected ? '' : 'disabled'}`}
+                onClick={handleInitiateClone}
+                disabled={cloning || !sourceConnected || !targetConnected}
+              >
+                {cloning ? '⏳ Cloning...' : '🚀 Clone Database'}
+              </button>
+            </div>
+
+            {showConfirmDialog && (
+              <ConfirmClone 
+                source={source}
+                target={target}
+                onConfirm={cloneDatabase}
+                onCancel={() => setShowConfirmDialog(false)}
+              />
+            )}
+
+            {cloneSuccess && !showCronDialog && (
+              <div className="success-actions">
+                <div className="success-message">
+                  ✅ Clone completed successfully!
+                </div>
+                <button 
+                  className="schedule-btn"
+                  onClick={() => setShowCronDialog(true)}
+                >
+                  ⏰ Schedule Auto-Clone
+                </button>
+                <button 
+                  className="dismiss-btn"
+                  onClick={() => setCloneSuccess(false)}
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+
+            {showCronDialog && (
+              <CronDialog
+                source={source}
+                target={target}
+                existingJobs={existingJobs}
+                onClose={() => {
+                  setShowCronDialog(false);
+                  setCloneSuccess(false);
+                }}
+                onSave={saveCronJob}
+              />
+            )}
+
+            <ProgressLog logs={logs} />
+          </div>
+        )}
+
+        {activeTab === 'jobs' && (
+          <CronManager apiUrl={API_URL} />
+        )}
+
+        {activeTab === 'logs' && (
+          <LogViewer apiUrl={API_URL} />
+        )}
       </div>
     </div>
   );
