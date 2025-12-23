@@ -180,6 +180,9 @@
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  max-height: 600px;
+  overflow-y: auto;
+  position: relative;
 }
 
 .logs-table {
@@ -190,6 +193,9 @@
 .logs-table thead {
   background: #f5f5f5;
   border-bottom: 2px solid #e0e0e0;
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 
 .logs-table th {

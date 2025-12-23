@@ -790,9 +790,82 @@ async function performClone(source, target, logCallback, jobId = null, jobName =
     }
 
     await targetConn.execute('SET FOREIGN_KEY_CHECKS = 1');
-    logWithPersist('success', `Clone completed successfully! ${tables.length} tables copied.`, { tablesCloned: tables.length });
+
+    // Clone views
+    logWithPersist('info', 'Cloning views...');
+    const [views] = await sourceConn.execute(
+      `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_SCHEMA = ?`,
+      [source.database]
+    );
+
+    for (const view of views) {
+      try {
+        const [viewDef] = await sourceConn.execute(`SHOW CREATE VIEW \`${view.TABLE_NAME}\``);
+        const createView = viewDef[0]['Create View'];
+        await targetConn.execute(`DROP VIEW IF EXISTS \`${view.TABLE_NAME}\``);
+        // Remove DEFINER clause for portability
+        const cleanedView = createView.replace(/DEFINER=`[^`]+`@`[^`]+`\s*/gi, '');
+        await targetConn.execute(cleanedView);
+        logWithPersist('success', `✓ View cloned: ${view.TABLE_NAME}`);
+      } catch (viewError) {
+        logWithPersist('warning', `Could not clone view ${view.TABLE_NAME}: ${viewError.message}`);
+      }
+    }
+
+    // Clone stored procedures
+    logWithPersist('info', 'Cloning stored procedures...');
+    const [procedures] = await sourceConn.execute(
+      `SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_SCHEMA = ? AND ROUTINE_TYPE = 'PROCEDURE'`,
+      [source.database]
+    );
+
+    for (const proc of procedures) {
+      try {
+        const [procDef] = await sourceConn.execute(`SHOW CREATE PROCEDURE \`${proc.ROUTINE_NAME}\``);
+        const createProc = procDef[0]['Create Procedure'];
+        await targetConn.execute(`DROP PROCEDURE IF EXISTS \`${proc.ROUTINE_NAME}\``);
+        const cleanedProc = createProc.replace(/DEFINER=`[^`]+`@`[^`]+`\s*/gi, '');
+        await targetConn.execute(cleanedProc);
+        logWithPersist('success', `✓ Procedure cloned: ${proc.ROUTINE_NAME}`);
+      } catch (procError) {
+        logWithPersist('warning', `Could not clone procedure ${proc.ROUTINE_NAME}: ${procError.message}`);
+      }
+    }
+
+    // Clone stored functions
+    logWithPersist('info', 'Cloning stored functions...');
+    const [functions] = await sourceConn.execute(
+      `SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_SCHEMA = ? AND ROUTINE_TYPE = 'FUNCTION'`,
+      [source.database]
+    );
+
+    for (const func of functions) {
+      try {
+        const [funcDef] = await sourceConn.execute(`SHOW CREATE FUNCTION \`${func.ROUTINE_NAME}\``);
+        const createFunc = funcDef[0]['Create Function'];
+        await targetConn.execute(`DROP FUNCTION IF EXISTS \`${func.ROUTINE_NAME}\``);
+        const cleanedFunc = createFunc.replace(/DEFINER=`[^`]+`@`[^`]+`\s*/gi, '');
+        await targetConn.execute(cleanedFunc);
+        logWithPersist('success', `✓ Function cloned: ${func.ROUTINE_NAME}`);
+      } catch (funcError) {
+        logWithPersist('warning', `Could not clone function ${func.ROUTINE_NAME}: ${funcError.message}`);
+      }
+    }
+
+    logWithPersist('success', `Clone completed successfully! ${tables.length} tables, ${views.length} views, ${procedures.length} procedures, ${functions.length} functions copied.`, { 
+      tablesCloned: tables.length,
+      viewsCloned: views.length,
+      proceduresCloned: procedures.length,
+      functionsCloned: functions.length
+    });
     
-    return { success: true, tablesCloned: tables.length };
+    return { 
+      success: true, 
+      tablesCloned: tables.length,
+      viewsCloned: views.length,
+      proceduresCloned: procedures.length,
+      functionsCloned: functions.length
+    };
   } catch (error) {
     logWithPersist('error', `Clone failed: ${error.message}`, { error: error.message, stack: error.stack });
     return { success: false, error: error.message };
