@@ -366,9 +366,29 @@ app.post('/api/clone-database', async (req, res) => {
         // Try batch insert first
         const columns = Object.keys(rows[0]);
         
+        // Helper function to safely serialize values for MySQL
+        const serializeValue = (value) => {
+          if (value === null || value === undefined) {
+            return null;
+          }
+          // Convert JSON objects/arrays to strings
+          if (typeof value === 'object' && !Buffer.isBuffer(value) && !(value instanceof Date)) {
+            return JSON.stringify(value);
+          }
+          // Convert Buffers to strings for JSON columns
+          if (Buffer.isBuffer(value)) {
+            try {
+              return value.toString('utf8');
+            } catch {
+              return value;
+            }
+          }
+          return value;
+        };
+        
         try {
           const placeholders = rows.map(() => `(${columns.map(() => '?').join(', ')})`).join(', ');
-          const values = rows.flatMap(row => columns.map(col => row[col]));
+          const values = rows.flatMap(row => columns.map(col => serializeValue(row[col])));
           
           const insertSQL = `INSERT INTO \`${tableName}\` (${columns.map(c => `\`${c}\``).join(', ')}) VALUES ${placeholders}`;
           await targetConn.execute(insertSQL, values);
@@ -381,7 +401,7 @@ app.post('/api/clone-database', async (req, res) => {
           for (const row of rows) {
             try {
               const singlePlaceholder = `(${columns.map(() => '?').join(', ')})`;
-              const singleValues = columns.map(col => row[col]);
+              const singleValues = columns.map(col => serializeValue(row[col]));
               const singleInsertSQL = `INSERT INTO \`${tableName}\` (${columns.map(c => `\`${c}\``).join(', ')}) VALUES ${singlePlaceholder}`;
               await targetConn.execute(singleInsertSQL, singleValues);
               totalCopied++;
