@@ -313,7 +313,13 @@ app.post('/api/clone-database', async (req, res) => {
 
       // Get CREATE TABLE statement from source
       const [createResult] = await sourceConn.execute(`SHOW CREATE TABLE \`${tableName}\``);
-      const createStatement = createResult[0]['Create Table'];
+      let createStatement = createResult[0]['Create Table'];
+
+      // Replace unsupported collations with compatible ones
+      createStatement = createStatement
+        .replace(/utf8mb4_uca1400_ai_ci/g, 'utf8mb4_unicode_ci')
+        .replace(/utf8mb4_0900_ai_ci/g, 'utf8mb4_unicode_ci')
+        .replace(/utf8_uca1400_ai_ci/g, 'utf8_unicode_ci');
 
       // Create table on target
       await targetConn.execute(createStatement);
