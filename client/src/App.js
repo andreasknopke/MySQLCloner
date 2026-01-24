@@ -71,6 +71,35 @@ function App() {
     }
   };
 
+  const clearTargetDatabase = async () => {
+    if (!target.database || !targetConnected) return;
+    
+    const confirmed = window.confirm(
+      `⚠️ WARNING: This will delete all data from all tables in the target database "${target.database}".\n\n` +
+      `This action cannot be undone!\n\n` +
+      `Are you sure you want to continue?`
+    );
+    
+    if (!confirmed) return;
+    
+    try {
+      setLogs([...logs, { type: 'info', message: 'Clearing target database...' }]);
+      const response = await axios.post(`${API_URL}/clear-database`, target);
+      if (response.data.success) {
+        setLogs([...logs, 
+          { type: 'success', message: `✅ ${response.data.message}` }
+        ]);
+        // Refresh stats to show empty tables
+        await refreshTargetStats();
+      }
+    } catch (error) {
+      setLogs([...logs, { 
+        type: 'error', 
+        message: `Failed to clear database: ${error.response?.data?.message || error.message}` 
+      }]);
+    }
+  };
+
   const testSourceConnection = async () => {
     try {
       const response = await axios.post(`${API_URL}/test-connection`, { ...source, isSource: true });
@@ -291,7 +320,7 @@ function App() {
                   selectedDatabase={source.database}
                   onDatabaseSelect={(db) => setSource({ ...source, database: db })}
                 />
-                {sourceStats && <DatabaseStats stats={sourceStats} onRefresh={refreshSourceStats} />}
+                {sourceStats && <DatabaseStats stats={sourceStats} onRefresh={refreshSourceStats} isSource={true} />}
               </div>
 
               <div className="arrow">
@@ -308,7 +337,7 @@ function App() {
                   selectedDatabase={target.database}
                   onDatabaseSelect={(db) => setTarget({ ...target, database: db })}
                 />
-                {targetStats && <DatabaseStats stats={targetStats} onRefresh={refreshTargetStats} />}
+                {targetStats && <DatabaseStats stats={targetStats} onRefresh={refreshTargetStats} onClear={clearTargetDatabase} isSource={false} />}
               </div>
             </div>
 

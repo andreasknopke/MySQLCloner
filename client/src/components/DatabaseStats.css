@@ -25,6 +25,12 @@
   margin-bottom: 15px;
 }
 
+.stats-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .database-stats h3 {
   color: #667eea;
   margin: 0;
@@ -53,6 +59,31 @@
 
 .btn-refresh-stats:active {
   transform: rotate(180deg) scale(0.95);
+}
+
+.btn-clear-database {
+  background: #dc3545;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all 0.3s;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.btn-clear-database:hover {
+  background: #c82333;
+  transform: scale(1.05);
+}
+
+.btn-clear-database:active {
+  transform: scale(0.98);
 }
 
 .stats-overview {

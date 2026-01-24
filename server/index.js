@@ -586,6 +586,58 @@ app.post('/api/get-databases', async (req, res) => {
 });
 
 // Get database statistics endpoint
+// Clear target database endpoint - truncates all tables
+app.post('/api/clear-database', async (req, res) => {
+  try {
+    const { host, user, password, database, port } = req.body;
+
+    const connection = await mysql.createConnection({
+      host,
+      user,
+      password,
+      database,
+      port: port || 3306,
+    });
+
+    // Disable foreign key checks
+    await connection.execute('SET FOREIGN_KEY_CHECKS = 0');
+
+    // Get all tables (only BASE TABLE, not views)
+    const [tables] = await connection.execute(
+      `SELECT TABLE_NAME FROM information_schema.TABLES 
+       WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'`,
+      [database]
+    );
+
+    // Truncate each table
+    let clearedCount = 0;
+    for (const table of tables) {
+      try {
+        await connection.execute(`TRUNCATE TABLE \`${table.TABLE_NAME}\``);
+        clearedCount++;
+      } catch (error) {
+        console.log(`Could not truncate ${table.TABLE_NAME}:`, error.message);
+      }
+    }
+
+    // Re-enable foreign key checks
+    await connection.execute('SET FOREIGN_KEY_CHECKS = 1');
+
+    await connection.end();
+
+    res.json({ 
+      success: true, 
+      message: `Successfully cleared ${clearedCount} tables`,
+      clearedCount
+    });
+  } catch (error) {
+    res.status(400).json({ 
+      success: false, 
+      message: error.message 
+    });
+  }
+});
+
 app.post('/api/get-database-stats', async (req, res) => {
   try {
     const { host, user, password, database, port, isSource } = req.body;

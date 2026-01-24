@@ -1,7 +1,7 @@
 import React from 'react';
 import './DatabaseStats.css';
 
-function DatabaseStats({ stats, onRefresh }) {
+function DatabaseStats({ stats, onRefresh, onClear, isSource }) {
   if (!stats) return null;
 
   // Ensure sizeInMB is a number
@@ -12,11 +12,18 @@ function DatabaseStats({ stats, onRefresh }) {
     <div className="database-stats">
       <div className="stats-header">
         <h3>📊 Datenbankstatistiken</h3>
-        {onRefresh && (
-          <button className="btn-refresh-stats" onClick={onRefresh} title="Statistiken aktualisieren">
-            🔄
-          </button>
-        )}
+        <div className="stats-header-actions">
+          {onRefresh && (
+            <button className="btn-refresh-stats" onClick={onRefresh} title="Statistiken aktualisieren">
+              🔄
+            </button>
+          )}
+          {!isSource && onClear && (
+            <button className="btn-clear-database" onClick={onClear} title="Alle Tabellen leeren">
+              🗑️ Clear DB
+            </button>
+          )}
+        </div>
       </div>
       
       <div className="stats-overview">
