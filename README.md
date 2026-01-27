@@ -8,6 +8,7 @@ A sleek, modern web application for cloning MySQL databases across networks.
 - Clean, responsive UI built with React
 - Real-time progress monitoring
 - Live connection status indicators
+- Structure-only clone option
 
 🔌 **Connection Management**
 - Test connections before cloning

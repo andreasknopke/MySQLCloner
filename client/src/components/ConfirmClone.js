@@ -1,7 +1,7 @@
 import React from 'react';
 import './ConfirmClone.css';
 
-function ConfirmClone({ source, target, onConfirm, onCancel }) {
+function ConfirmClone({ source, target, structureOnly, onStructureOnlyChange, onConfirm, onCancel }) {
   const sourceDbName = source.database;
   const targetDbName = target.database;
 
@@ -30,12 +30,29 @@ function ConfirmClone({ source, target, onConfirm, onCancel }) {
             </div>
           </div>
 
+          <div className="clone-options">
+            <h3>⚙️ Klon-Optionen:</h3>
+            <label className="checkbox-option">
+              <input 
+                type="checkbox" 
+                checked={structureOnly}
+                onChange={(e) => onStructureOnlyChange(e.target.checked)}
+              />
+              <span>Nur Struktur klonen (keine Daten)</span>
+            </label>
+          </div>
+
           <div className="commands-section">
             <h3>🔧 Klon-Prozess:</h3>
 
             <div className="command-block">
               <div className="command-label">Der folgende Prozess wird ausgeführt:</div>
-              <pre className="command-code">{`1. Verbinde zu Quell-DB (READ-ONLY Modus)
+              <pre className="command-code">{structureOnly ? `1. Verbinde zu Quell-DB (READ-ONLY Modus)
+2. Verbinde zu Ziel-DB
+3. Erstelle Ziel-Datenbank falls nötig
+4. Kopiere alle Tabellen-Strukturen (nur Schema)
+5. Kopiere Views, Procedures, Functions
+6. Schließe Verbindungen` : `1. Verbinde zu Quell-DB (READ-ONLY Modus)
 2. Verbinde zu Ziel-DB
 3. Erstelle Ziel-Datenbank falls nötig
 4. Kopiere alle Tabellen (Schema + Daten)

@@ -195,7 +195,7 @@ app.post('/api/clone-database', async (req, res) => {
   let targetConn = null;
 
   try {
-    const { source, target } = req.body;
+    const { source, target, structureOnly } = req.body;
 
     // Validate inputs
     if (!source || !target) {
@@ -323,6 +323,12 @@ app.post('/api/clone-database', async (req, res) => {
 
       // Create table on target
       await targetConn.execute(createStatement);
+
+      // Skip data copy if structureOnly is true
+      if (structureOnly) {
+        sendProgress(`  ✓ ${tableName}: Structure copied (data skipped)`);
+        continue;
+      }
 
       // Get first column as fallback for ordering
       const [colInfo] = await sourceConn.execute(

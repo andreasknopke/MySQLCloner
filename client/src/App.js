@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import axios from 'axios';
 import './App.css';
 import CredentialForm from './components/CredentialForm';
@@ -38,6 +38,7 @@ function App() {
   const [showCronDialog, setShowCronDialog] = useState(false);
   const [cloneSuccess, setCloneSuccess] = useState(false);
   const [existingJobs, setExistingJobs] = useState([]);
+  const [structureOnly, setStructureOnly] = useState(false);
 
   // Dynamically determine API URL based on environment
   const API_URL = process.env.REACT_APP_API_URL || 
@@ -205,7 +206,7 @@ function App() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ source, target }),
+        body: JSON.stringify({ source, target, structureOnly }),
       });
 
       if (!response.ok) {
@@ -355,6 +356,8 @@ function App() {
               <ConfirmClone 
                 source={source}
                 target={target}
+                structureOnly={structureOnly}
+                onStructureOnlyChange={setStructureOnly}
                 onConfirm={cloneDatabase}
                 onCancel={() => setShowConfirmDialog(false)}
               />
