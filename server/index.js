@@ -381,15 +381,11 @@ app.post('/api/clone-database', async (req, res) => {
         // Helper function to safely serialize values for MySQL
         const serializeValue = (value) => {
           if (value === null || value === undefined) {
-            rLeave Buffers (BLOB data) intact - mysql2 handles them correctly
+            return null;
+          }
+          // Leave Buffers (BLOB data) intact - mysql2 handles them correctly
           if (Buffer.isBuffer(value)) {
-            return value;  // Don't convert to string! Binary data must stay as Buffer.Convert Buffers to strings for JSON columns
-          if (Buffer.isBuffer(value)) {
-            try {
-              return value.toString('utf8');
-            } catch {
-              return value;
-            }
+            return value;  // Don't convert to string! Binary data must stay as Buffer
           }
           return value;
         };
